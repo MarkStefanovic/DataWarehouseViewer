@@ -1,0 +1,22 @@
+name: C:\Miniconda35\envs\peoplenet_env
+dependencies:
+- jpeg=8d=vc10_0
+- libpng=1.6.22=vc10_0
+- libtiff=4.0.6=vc10_2
+- openssl=1.0.2h=vc10_0
+- pip=8.1.2=py34_0
+- pyqt=4.11.4=py34_6
+- python=3.4.4=4
+- qt=4.8.7=vc10_8
+- setuptools=23.0.0=py34_0
+- sip=4.16.9=py34_2
+- vs2010_runtime=10.00.40219.1=1
+- wheel=0.29.0=py34_0
+- xlwt=1.1.1=py34_0
+- zlib=1.2.8=vc10_3
+- pip:
+  - future==0.15.2
+  - pefile==2016.3.28
+  - pyinstaller==3.2
+  - pypiwin32==219
+
