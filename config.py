@@ -8,24 +8,21 @@ of this is that if multiple processes use the same config file, they may retriev
 outdated results since the configuration file is only loaded once.
 
 Examples:
->>> cfg = SimpleJsonConfig('config.json')
->>> cfg.set_variable('hello', 1)
+>>> cfg = SimpleJsonConfig('test.config')
+>>> cfg.get_or_set_variable('hello', 1)
 1
 >>> cfg.get_variable('hello')
 1
 
->>> cfg = SimpleJsonConfig()
 >>> cfg.set_variable('test', [1, 2, 3])
+>>> cfg.get_variable('test')
 [1, 2, 3]
 
->>> cfg3 = SimpleJsonConfig('test.config')
->>> cfg3.get_variable('test2')
-Traceback (most recent call last):
-...
-FileNotFoundError: [Errno 2] No such file or directory: 'test.config'
-"""
+>>> cfg.get_variable('test2')
 
+"""
 import json
+import os
 
 
 class SimpleJsonConfig():
@@ -47,7 +44,7 @@ class SimpleJsonConfig():
             self._cache[key] = val
             self.save()
 
-    def field_types(self):
+    def field_types(self) -> dict:
         fields = self._cache.get('fields')
         if fields:
             return {val[0]: val[2] for val in fields}
@@ -66,12 +63,15 @@ class SimpleJsonConfig():
 
     def load(self) -> dict:
         """Read json file into a dictionary."""
-        with open(self.json_path, 'r') as fh:
-            try:
+        try:
+            with open(os.path.abspath(self.json_path), 'r') as fh:
                 return json.load(fh)
-            except Exception as e:
-                print(str(e))
-                return {}
+        except FileNotFoundError:
+            print('Config file not found in current directory.')
+            return {}
+        except Exception as e:
+            print(str(e))
+            return {}
 
     def save(self) -> None:
         """Save all configuration variables to disk."""
@@ -82,3 +82,4 @@ class SimpleJsonConfig():
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
+

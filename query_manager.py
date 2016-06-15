@@ -99,15 +99,11 @@ class QueryManager(QtCore.QObject):
     @property
     def filter_options(self):
         if self._fields:
-            return sorted([(val.name, val.type) for val in self.fields.values()])
-            # return {f[0]: f[1] for f in self.fields if f[2]}
+            return sorted([(val.name, val.type) for val in self.fields.values() if val.filterable])
 
     @property
     def headers(self):
-        with sqlite3.connect(self._db) as con:
-            cur = con.execute(self.sql)
-            headers = [desc[0] for desc in cur.description]
-        return headers
+        return [fld.name for fld in self.fields.values()]
 
     @property
     def max_rows(self) -> str:

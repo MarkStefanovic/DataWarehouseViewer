@@ -100,3 +100,6 @@ output/
 temp.xls
 test.db
 view.spec
+errors.txt
+*.bat
+setup.py

@@ -1,5 +1,5 @@
 """This module displays the data provided by the query manager"""
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 import datetime
 from functools import partial
 import os
@@ -36,11 +36,6 @@ class DatasheetView(QtGui.QWidget):
         self.query_controls = {}
         self.menu = QtGui.QMenu(self)
 
-        #   allow sorting and filtering by using a proxy model
-        # self.proxy = CustomSortFilterProxyModel(self)
-        # self.proxy.setDynamicSortFilter(True)
-        # self.proxy.setSourceModel(self.model)
-        # self.table.setModel(self.proxy)
         self.table.setModel(self.model)
 
         self.table.resizeColumnsToContents()
@@ -48,20 +43,13 @@ class DatasheetView(QtGui.QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
 
-        #   hide keys
-        # self.table.setColumnHidden(0, True)
-        # self.table.setColumnHidden(1, True)
-
-        #   CREATE WIDGETS
+    #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
         self.btn_reset = QtGui.QPushButton('&Reset')
         self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
-        # self.cbo_search = QtGui.QComboBox()
-        # self.cbo_search.addItems([self.model.headerData(x, QtCore.Qt.Horizontal)
-        #    for x in range(self.model.columnCount())])
 
-        #   LAYOUT
+    #   LAYOUT
         self.layout = QtGui.QGridLayout()
         self.setLayout(self.layout)
         self.layout.setColumnStretch(0, 1)
@@ -85,15 +73,9 @@ class DatasheetView(QtGui.QWidget):
         self.statusbar = QtGui.QStatusBar()
         self.statusbar.showMessage("")
         bottom_bar.addWidget(self.statusbar, 0, 0, 1, 4)
-        # self.bottom_bar.addWidget(self.button_box, 0, 0, 1, 4)
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
-        # layout
-        # , 1  # row
-        # , 1  # column
-        # , 2  # rowSpan
-        # , 1  # columnSpan
 
-        #   CONNECT SIGNALS
+    #   CONNECT SIGNALS
         self.model.filters_changed.connect(self.refresh_summary)
         self.model.model_error.connect(self.outside_error)
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
@@ -142,28 +124,19 @@ class DatasheetView(QtGui.QWidget):
 
     def copy(self):
         """Copy selected cells into copy-buffer"""
-        selection = self.selectionModel()
+        selection = self.table.selectionModel()
         indexes = selection.selectedIndexes()
-        if len(indexes) < 1:  # Nothing selected
-            return
 
-        # turn selection into a DataFrame
-        # items = pd.DataFrame()
-        items = []
+        rows = OrderedDict()
         for idx in indexes:
             row = idx.row()
-            col = idx.column()
-            item = idx.data()
-            items.append([])
-            val = item or '' + '\t'
-            items[row].append(item or '')
-
-        # Make into tab-delimited text (best for Excel)
-        items = list(items.itertuples(index=False))
-        s = '\n'.join(['\t'.join([str(cell) for cell in row]) for row in items])
-
-        # Send to clipboard
-        QtGui.QApplication.clipboard().setText(s)
+            rows[row] = rows.get(row, [])
+            rows[row].append(str(idx.data()) or '')
+        str_array = ''
+        for row in rows.keys():
+            str_array += '\t'.join([col for col in rows[row]])
+            str_array += '\n'
+        QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
         self.set_status("Pulling data from the server...")
@@ -330,7 +303,7 @@ class DatasheetView(QtGui.QWidget):
             , 'str':   str_handler
         }
 
-        for field_name, field_type in self.query.filter_options: #.items():
+        for field_name, field_type in self.query.filter_options[:10]:
             handlers.get(field_type)(field_name)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
@@ -417,10 +390,6 @@ if __name__ == '__main__':
     try:
         app = QtGui.QApplication(sys.argv)
 
-        # db = QtSql.QSqlDatabase.addDatabase('QSQLITE')
-        # db.setDatabaseName('test.db')
-        # db.open()
-
         # app.setStyle('cleanlooks')
         app.setStyle("plastique")
         with open('darkcity.css', 'r') as fh:
@@ -430,14 +399,11 @@ if __name__ == '__main__':
         font = QtGui.QFont("Arial", 11)
         app.setFont(font)
 
-        icon_path = 'app.ico'
-        icon = QtGui.QIcon(icon_path)
+        icon = QtGui.QIcon('app.ico')
         app.setWindowIcon(icon)
 
         main_view = MainView()
         main_view.showMaximized()
-        # main_view.setGeometry(100, 100, 1000, 600)
-        # main_view.show()
         main_view.setWindowTitle('PeopleNet')
         app.exec_()
         # sys.exit(0)
