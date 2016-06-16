@@ -24,10 +24,15 @@ Examples:
 import json
 import os
 
+from PyQt4 import QtCore
 
-class SimpleJsonConfig():
+
+class SimpleJsonConfig(QtCore.QObject):
+    config_errored = QtCore.pyqtSignal(str)
+
     def __init__(self, json_path='config.json'):
         """Initialize an instance of the SimpleJsonConfig class."""
+        super(SimpleJsonConfig, self).__init__()
         self.json_path = json_path
         self._cache = self.load()
 
@@ -67,10 +72,10 @@ class SimpleJsonConfig():
             with open(os.path.abspath(self.json_path), 'r') as fh:
                 return json.load(fh)
         except FileNotFoundError:
-            print('Config file not found in current directory.')
+            self.config_errored.emit("Config file config.json not found in current directory")
             return {}
         except Exception as e:
-            print(str(e))
+            self.config_errored.emit("Configuration error: " + str(e))
             return {}
 
     def save(self) -> None:

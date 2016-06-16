@@ -1,24 +1,24 @@
 """This module displays the data provided by the query manager"""
+
 from collections import namedtuple, OrderedDict
-import datetime
 from functools import partial
 import os
-from pathlib import Path
 from subprocess import Popen
 import sys
 
-from PyQt4 import QtCore, QtGui, QtSql
+from PyQt4 import QtCore, QtGui
 from PyQt4.QtCore import pyqtSlot as Slot
 import xlwt
 
 from config import SimpleJsonConfig
 from model import AbstractModel
+from logger import rotating_log
 
+from messenger import global_message_queue
 
 class DatasheetView(QtGui.QWidget):
     """
-    This class takes a model as an input and creates
-    an editable datasheet therefrom
+    This class takes a model as an input and creates an editable datasheet therefrom.
     """
 
     def __init__(self, parent=None):
@@ -29,7 +29,9 @@ class DatasheetView(QtGui.QWidget):
         )
         self.setWindowTitle('PeopleNet')
         self.model = AbstractModel()
-        self.query = self.model.query_manager  # shortcut
+        self.query = self.model.query_manager
+        #   we want all interactions with the controller (the query manager)
+        #   to go through the model.
         self.setWindowTitle('PeopleNet')
         self.table = QtGui.QTableView()
         self.table.setSortingEnabled(True)
@@ -80,6 +82,8 @@ class DatasheetView(QtGui.QWidget):
         self.model.model_error.connect(self.outside_error)
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
+        # self.model.filters_changed.connect(self.reset_status)
+        global_message_queue.rows_returned_signal.connect(self.show_rows_returned)
 
     def get_all_selected_ids(self):
         """ returns the selected primary key of the selected row """
@@ -94,14 +98,20 @@ class DatasheetView(QtGui.QWidget):
             selected_ids.append(id)
         return selected_ids
 
+    def exit(self):
+        self.stop_everything.emit()
+
     def export_results(self) -> None:
         self.to_excel(data=self.model._original_data, header=self.query.headers)
 
     def export_visible(self) -> None:
         self.to_excel(data=self.model._modified_data, header=self.query.headers)
 
-    def set_status(self, msg, duration=5000):
-        self.statusbar.showMessage(msg, duration)
+    def set_status(self, msg, duration=5000) -> None:
+        if duration:
+            self.statusbar.showMessage(msg, duration)
+        else:
+            self.statusbar.showMessage(msg)
 
     def keyPressEvent(self, event):
         if event.matches(QtGui.QKeySequence.Copy):
@@ -139,18 +149,14 @@ class DatasheetView(QtGui.QWidget):
         QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
-        self.set_status("Pulling data from the server...")
-        self.query.pull()
-        self.reset_status()
+        self.set_status("Pulling data from the server...", duration=None)
+        self.model.pull()
         self.table.resizeColumnsToContents()
 
     def contextMenuEvent(self, event):
         """Implements right-clicking on cell."""
         rows = sorted(set(index.row() for index in self.table.selectedIndexes()))
         cols = sorted(set(index.column() for index in self.table.selectedIndexes()))
-        # for row in rows:
-        #     print('Rows {} is selected'.format(rows))
-        #     print('Columns {} is selected'.format(cols))
 
         row_ix = rows[0] if rows else 0
         col_ix = cols[0] if cols else 0
@@ -263,6 +269,10 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(self.qry_layout, 0, 0, 1, 1, QtCore.Qt.AlignTop)
         self.layout.setColumnStretch(0, 1)
 
+    @QtCore.pyqtSlot(int)
+    def show_rows_returned(self, ct):
+        self.set_status('The pull was successful.  Rows = {}'.format(ct))
+
     def query_layout(self):
         """Populate a layout with filter controls"""
         layout = QtGui.QGridLayout()
@@ -273,7 +283,8 @@ class DatasheetView(QtGui.QWidget):
             nonlocal current_row
             lbl = QtGui.QLabel(label or name)
             txt = QtGui.QLineEdit()
-            self.query_controls[name + '_' + type] = Control(handle=txt, type=type)
+            ctrl_name = '{name}_{type}'.format(name=name, type=type)
+            self.query_controls[ctrl_name] = Control(handle=txt, type=type)
             layout.addWidget(lbl, current_row, 0, 1, 1)
             layout.addWidget(txt, current_row, 1, 1, 1)
 
@@ -284,8 +295,8 @@ class DatasheetView(QtGui.QWidget):
             current_row += 1
 
         def date_handler(name: str) -> None:
-            add_row(name, 'date_start', label=name + ' Start')
-            add_row(name, 'date_end', label=name + ' End')
+            add_row(name, 'date_start', label='{} Start'.format(name))
+            add_row(name, 'date_end', label='{} End'.format(name))
 
         def float_handler(name):
             add_row(name, 'float')
@@ -294,7 +305,7 @@ class DatasheetView(QtGui.QWidget):
             add_row(name, 'int')
 
         def str_handler(name):
-            add_row(name, 'str', label=name + ' Like')
+            add_row(name, 'str', label='{} Like'.format(name))
 
         handlers = {
             'date':    date_handler
@@ -332,13 +343,9 @@ class DatasheetView(QtGui.QWidget):
     def summary_frame(self):
         tbl = QtGui.QTableWidget()
 
-        # tbl.setHorizontalHeaderItem(0, QtGui.QTableWidgetItem('Measure'))
-        # tbl.setHorizontalHeaderItem(0, QtGui.QTableWidgetItem('Val'))
-        # tbl.setHorizontalHeaderLabels('Measure, Value')
         tbl.setRowCount(len(self.model.totals))
         tbl.setColumnCount(2)
         tbl.setAlternatingRowColors(True)
-        # new_item.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
         for i, (key, val) in enumerate(self.model.totals.items()):
             measure = QtGui.QTableWidgetItem(key)
             value = QtGui.QTableWidgetItem(val)
@@ -360,13 +367,6 @@ class MainView(QtGui.QDialog):
         # tabs.addTab(DatasheetView(), 'Books2')
 
         mainLayout = QtGui.QVBoxLayout()
-
-        #   change the background color to blue
-        palette = self.palette()
-        palette.setColor(self.backgroundRole(), QtGui.QColor(30, 80, 140))
-        palette.setColor(self.foregroundRole(), QtGui.QColor(0, 0, 0))
-        self.setPalette(palette)
-
         self.menubar = QtGui.QMenuBar()
         mainLayout.addWidget(self.menubar)
         filemenu = self.menubar.addMenu('&File')
@@ -381,21 +381,19 @@ class MainView(QtGui.QDialog):
 
         mainLayout.addWidget(tabs)
         self.setLayout(mainLayout)
-        self.setWindowTitle("Main")
 
-    def filemenu_placeholder_action(self):
-        print('filemenu_placeholder_action pressed')
 
 if __name__ == '__main__':
+    logger = rotating_log('error')
+    app = QtGui.QApplication(sys.argv)
     try:
-        app = QtGui.QApplication(sys.argv)
-
         # app.setStyle('cleanlooks')
         app.setStyle("plastique")
         with open('darkcity.css', 'r') as fh:
             style_sheet = fh.read()
         app.setStyleSheet(style_sheet)
-        #   set font
+
+    #   set font (we set it here to more easily keep it consistent)
         font = QtGui.QFont("Arial", 11)
         app.setFont(font)
 
@@ -406,11 +404,11 @@ if __name__ == '__main__':
         main_view.showMaximized()
         main_view.setWindowTitle('PeopleNet')
         app.exec_()
-        # sys.exit(0)
-        os._exit(0)
+        sys.exit(0)
+        # os._exit(0)
     except SystemExit:
         print("Closing Window...")
     except Exception as e:
-        print(sys.exc_info()[1])
-        # logger.error(e)
-        sys.exit(1)
+        logger.error(sys.exc_info()[1])
+        logger.error(str(e))
+        sys.exit(app.exec_())

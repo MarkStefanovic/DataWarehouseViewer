@@ -15,6 +15,7 @@ class AbstractModel(QAbstractTableModel):
         self._modified_data = []
         self._header = self.query_manager.headers
         self.query_manager.query_error.connect(self.query_errored)
+        self.query_manager.query_results.connect(self.update_view)
 
     @property
     def totals(self) -> dict:
@@ -24,15 +25,15 @@ class AbstractModel(QAbstractTableModel):
                 if fld.type == 'float':
                     total = sum([val[i] for val in self._modified_data])
                     avg = total/self.rowCount() if self.rowCount() > 0 else 0
-                    totals[fld.name + ' Sum'] = '{0:.2f}'.format(float(total))
-                    totals[fld.name + ' Avg'] = '{0:.2f}'.format(float(avg))
+                    totals['{} Sum'.format(fld.name)] = '{0:.2f}'.format(float(total))
+                    totals['{} Avg'.format(fld.name)] = '{0:.2f}'.format(float(avg))
                 elif fld.type == 'date':
                     minimum = min([val[i] for val in self._modified_data] or [0])
                     maximum = max([val[i] for val in self._modified_data] or [0])
-                    totals[fld.name + ' Min'] = str(minimum)
-                    totals[fld.name + ' Max'] = str(maximum)
+                    totals['{} Min'.format(fld.name)] = str(minimum)
+                    totals['{} Max'.format(fld.name)] = str(maximum)
                 else:
-                    totals[fld.name + ' DCount'] = str(len(set([val[i] for val in self._modified_data])))
+                    totals['{} DCount'.format(fld.name)] = str(len(set([val[i] for val in self._modified_data])))
             return totals
         except Exception as e:
             self.model_error.emit(str(e))
@@ -52,7 +53,8 @@ class AbstractModel(QAbstractTableModel):
                 return
             return self._modified_data[index.row()][index.column()]
         except Exception as e:
-            self.model_error.emit(str(e))
+            err_msg = 'Error modeling data: {}'.format(e)
+            self.model_error.emit(err_msg)
 
     def filter_equality(self, col_ix, val):
         self._modified_data = [x for x in self._modified_data if x[col_ix] == val]
@@ -95,11 +97,14 @@ class AbstractModel(QAbstractTableModel):
 
     def pull(self):
         try:
-            self.layoutAboutToBeChanged.emit()
-            self._original_data = self.query_manager.results()
-            self._modified_data = self._original_data
-            self.filters_changed.emit()
-            self.layoutChanged.emit()
+            # self.layoutAboutToBeChanged.emit()
+            # results = self.query_manager.results()
+            # self._original_data = results
+            # self._modified_data = results
+            # self.filters_changed.emit()
+            # self.layoutChanged.emit()
+
+            self.query_manager.pull()
         except Exception as e:
             self.model_error.emit(str(e))
 
@@ -137,3 +142,14 @@ class AbstractModel(QAbstractTableModel):
             self.layoutChanged.emit()
         except Exception as e:
             self.model_error(str(e))
+
+    @pyqtSlot(str)
+    def update_view(self, results):
+        try:
+            self.layoutAboutToBeChanged.emit()
+            self._original_data = results
+            self._modified_data = results
+            self.filters_changed.emit()
+            self.layoutChanged.emit()
+        except Exception as e:
+            self.query_errored.emit(str(e))
