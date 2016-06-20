@@ -191,15 +191,25 @@ class DatasheetView(QtGui.QWidget):
         lst_wac.setDefaultWidget(self.list)
         menu.addAction(lst_wac)
 
-        show_all = QtGui.QListWidgetItem("Show All")
-        show_all.setFlags(show_all.flags() | QtCore.Qt.ItemIsUserCheckable)
-        show_all.setCheckState(QtCore.Qt.Checked)
-        self.list.addItem(show_all)
-        for item in self.model.distinct_values(col_ix):
-            i = QtGui.QListWidgetItem('%s' % item)
+        def add_item(text, check_state=QtCore.Qt.Checked):
+            i = QtGui.QListWidgetItem('%s' % text)
             i.setFlags(i.flags() | QtCore.Qt.ItemIsUserCheckable)
-            i.setCheckState(QtCore.Qt.Checked)
+            i.setCheckState(check_state)
             self.list.addItem(i)
+
+        # show_all = QtGui.QListWidgetItem("Show All")
+        # show_all.setFlags(show_all.flags() | QtCore.Qt.ItemIsUserCheckable)
+        # show_all.setCheckState(QtCore.Qt.Checked)
+        # self.list.addItem(show_all)
+        add_item("Show All")
+        add_item("None", QtCore.Qt.Unchecked)
+        [add_item(itm) for itm in self.model.distinct_values(col_ix)]
+        # for itm in self.model.distinct_values(col_ix):
+        #     add_item(itm)
+            # i = QtGui.QListWidgetItem('%s' % item)
+            # i.setFlags(i.flags() | QtCore.Qt.ItemIsUserCheckable)
+            # i.setCheckState(QtCore.Qt.Checked)
+            # self.list.addItem(i)
         self.list.itemChanged.connect(partial(self.on_list_selection_changed, col_ix=col_ix))
         menu.addSeparator()
 
@@ -239,28 +249,67 @@ class DatasheetView(QtGui.QWidget):
         return menu
 
     def on_list_selection_changed(self, item, col_ix):
-        # self.list.blockSignals(True)
         all_items = [self.list.item(i) for i in range(len(self.list))]
-        check_state = {
-            itm.text(): itm.checkState()
+
+        Item = namedtuple('Items', 'handle check_state')
+        items_dict = {
+            itm.text(): Item(handle=itm, check_state=itm.checkState())
             for itm in all_items
         }
-        if item.text() == "Show All" and item.checkState() == QtCore.Qt.Checked:
-            [itm.setCheckState(QtCore.Qt.Checked) for itm in all_items if itm.text() != "Show All"]
-        elif item.text() != "Show All" and item.checkState() == QtCore.Qt.Unchecked:
-            all_items[0].setCheckState(QtCore.Qt.Unchecked)
 
-        if check_state.get("Show All") != QtCore.Qt.Checked:
-            checked_values = set(str(itm.text()) for itm in all_items if itm.checkState() == QtCore.Qt.Checked)
-            self.model.filter_set(col_ix, checked_values)
-        # self.list.blockSignals(False)
+        show_all_item = items_dict.get("Show All").handle
+        none_item = items_dict.get("None").handle
+        checked_items = [itm for itm in all_items if not itm in [show_all_item, none_item] and itm.checkState() == QtCore.Qt.Checked]
+        unchecked_items = [itm for itm in all_items if not itm in [show_all_item, none_item] and itm.checkState() == QtCore.Qt.Unchecked]
+        item_checked = True if item.checkState() == QtCore.Qt.Checked else False
+
+        def add_one():
+            none_item.setCheckState(QtCore.Qt.Unchecked)
+            if not unchecked_items:
+                show_all_item.setCheckState(QtCore.Qt.Checked)
+
+        def remove_one():
+            show_all_item.setCheckState(QtCore.Qt.Unchecked)
+            if not checked_items:
+                none_item.setCheckState(QtCore.Qt.Checked)
+
+        def show_all():
+            [itm.setCheckState(QtCore.Qt.Checked) for itm in all_items if itm != show_all_item]
+            none_item.setCheckState(QtCore.Qt.Unchecked)
+
+        def show_none():
+            [itm.setCheckState(QtCore.Qt.Unchecked) for itm in all_items if itm != none_item]
+            show_all_item.setCheckState(QtCore.Qt.Unchecked)
+
+        self.list.blockSignals(True)
+        if item == show_all_item:
+            if item_checked:
+                show_all()
+        elif item == none_item:
+            if item_checked:
+                show_none()
+        else:
+            if item_checked:
+                add_one()
+            else:
+                remove_one()
+        self.list.blockSignals(False)
+
+        checked_values = set(
+            str(itm.text())
+            for itm in all_items
+            if itm.checkState() == QtCore.Qt.Checked
+               and itm not in [show_all_item, none_item]
+        )
+        self.model.filter_set(col_ix, checked_values)
+
 
     @QtCore.pyqtSlot(str)
     def outside_error(self, msg):
         self.set_status(msg)
 
     # def open_config_file(self):
-    #     Popen('config.json', shell=True)
+    #     Popen('config.json', shell=True)09
 
     def to_excel(self, data, header):
         """Save displayed items to Excel file."""
