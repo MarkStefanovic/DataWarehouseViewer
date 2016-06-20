@@ -4,35 +4,27 @@ from collections import namedtuple, OrderedDict
 from functools import partial
 import os
 from subprocess import Popen
-import sys
 
 from PyQt4 import QtCore, QtGui
-from PyQt4.QtCore import pyqtSlot as Slot
 import xlwt
 
-from config import SimpleJsonConfig
+from json_config import SimpleJsonConfig
 from model import AbstractModel
-from logger import rotating_log
+from utilities import timestr
 
-from messenger import global_message_queue
 
 class DatasheetView(QtGui.QWidget):
     """
     This class takes a model as an input and creates an editable datasheet therefrom.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, config, parent=None):
         super(DatasheetView, self).__init__()
         self.setWindowFlags = (
             QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
-        self.setWindowTitle('PeopleNet')
-        self.model = AbstractModel()
-        self.query = self.model.query_manager
-        #   we want all interactions with the controller (the query manager)
-        #   to go through the model.
-        self.setWindowTitle('PeopleNet')
+        self.model = AbstractModel(config=config)
         self.table = QtGui.QTableView()
         self.table.setSortingEnabled(True)
         self.query_controls = {}
@@ -78,12 +70,13 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
 
     #   CONNECT SIGNALS
-        self.model.filters_changed.connect(self.refresh_summary)
-        self.model.model_error.connect(self.outside_error)
+        self.model.filters_changed_signal.connect(self.refresh_summary)
+        self.model.model_error_signal.connect(self.outside_error)
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
-        # self.model.filters_changed.connect(self.reset_status)
-        global_message_queue.rows_returned_signal.connect(self.show_rows_returned)
+        # self.model.filters_changed_signal.connect(self.reset_status)
+        self.model.filters_changed_signal.connect(self.table.resizeColumnsToContents)
+        self.model.rows_returned_signal.connect(self.show_rows_returned)
 
     def get_all_selected_ids(self):
         """ returns the selected primary key of the selected row """
@@ -101,13 +94,17 @@ class DatasheetView(QtGui.QWidget):
     def exit(self):
         self.stop_everything.emit()
 
-    def export_results(self) -> None:
-        self.to_excel(data=self.model._original_data, header=self.query.headers)
-
+    # def export_results(self) -> None:
+    #     self.to_excel(data=self.model._original_data, header=self.model.query.headers)
+    #
     def export_visible(self) -> None:
-        self.to_excel(data=self.model._modified_data, header=self.query.headers)
+        self.to_excel(data=self.model._modified_data, header=self.model.query.headers)
 
-    def set_status(self, msg, duration=5000) -> None:
+    @QtCore.pyqtSlot(int)
+    def filter_col_like(self, col_ix):
+        self.model.filter_like(val=self.col_like.text(), col_ix=col_ix)
+
+    def set_status(self, msg, duration=None) -> None:
         if duration:
             self.statusbar.showMessage(msg, duration)
         else:
@@ -119,16 +116,17 @@ class DatasheetView(QtGui.QWidget):
         else:
             super(DatasheetView, self).keyPressEvent(event)
 
-    @Slot()
+    @QtCore.pyqtSlot()
     def rclick_menu_delete(self):
         ids = self.get_all_selected_ids()
         self.model.delete_records(ids)
 
     def reset(self):
+        self.table.resizeColumnsToContents()
         self.txt_search.setText('')
         self.model.reset()
 
-    @Slot(str)
+    @QtCore.pyqtSlot(str)
     def on_lineEdit_textChanged(self, text):
         self.model.filter_like(self.txt_search.text())
 
@@ -149,12 +147,14 @@ class DatasheetView(QtGui.QWidget):
         QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
-        self.set_status("Pulling data from the server...", duration=None)
+        self.set_status("{}: Pulling {}".format(timestr(), self.model.query.str_criteria))
         self.model.pull()
-        self.table.resizeColumnsToContents()
 
     def contextMenuEvent(self, event):
         """Implements right-clicking on cell."""
+        if not self.table.underMouse():
+            return
+
         rows = sorted(set(index.row() for index in self.table.selectedIndexes()))
         cols = sorted(set(index.column() for index in self.table.selectedIndexes()))
 
@@ -164,12 +164,44 @@ class DatasheetView(QtGui.QWidget):
             return  # out of bounds
 
         menu = QtGui.QMenu(self)
+
         menu = self.make_cell_context_menu(menu, row_ix, col_ix)
         menu.exec_(self.mapToGlobal(event.pos()))
 
     def make_cell_context_menu(self, menu, row_ix, col_ix):
         """Create the mneu displayed when right-clicking on a cell."""
-        val = self.model._modified_data[row_ix][col_ix]
+        try:
+            val = self.model._modified_data[row_ix][col_ix]
+        except IndexError:
+            val = ""
+
+    #   Text Search Box: add input box to search for values in the column containing the search term
+        self.col_like = QtGui.QLineEdit()
+        self.col_like.setPlaceholderText("Text like")
+        txt_wac = QtGui.QWidgetAction(menu)
+        txt_wac.setDefaultWidget(self.col_like)
+        menu.addAction(txt_wac)
+        self.col_like.textChanged.connect(partial(self.filter_col_like, col_ix))
+        menu.addSeparator()
+
+    #   List Box: show distinct values for column
+        self.list = QtGui.QListWidget()
+        self.list.setFixedHeight(100)
+        lst_wac = QtGui .QWidgetAction(menu)
+        lst_wac.setDefaultWidget(self.list)
+        menu.addAction(lst_wac)
+
+        show_all = QtGui.QListWidgetItem("Show All")
+        show_all.setFlags(show_all.flags() | QtCore.Qt.ItemIsUserCheckable)
+        show_all.setCheckState(QtCore.Qt.Checked)
+        self.list.addItem(show_all)
+        for item in self.model.distinct_values(col_ix):
+            i = QtGui.QListWidgetItem('%s' % item)
+            i.setFlags(i.flags() | QtCore.Qt.ItemIsUserCheckable)
+            i.setCheckState(QtCore.Qt.Checked)
+            self.list.addItem(i)
+        self.list.itemChanged.connect(partial(self.on_list_selection_changed, col_ix=col_ix))
+        menu.addSeparator()
 
         menu.addAction(
             "Show Equal To"
@@ -196,6 +228,7 @@ class DatasheetView(QtGui.QWidget):
             )
         )
         menu.addSeparator()
+
         menu.addAction(
             "Reset filters"
             , self.model.reset
@@ -205,18 +238,29 @@ class DatasheetView(QtGui.QWidget):
         menu.addAction("Open in Excel", self.export_visible)
         return menu
 
-    @Slot(str)
+    def on_list_selection_changed(self, item, col_ix):
+        # self.list.blockSignals(True)
+        all_items = [self.list.item(i) for i in range(len(self.list))]
+        check_state = {
+            itm.text(): itm.checkState()
+            for itm in all_items
+        }
+        if item.text() == "Show All" and item.checkState() == QtCore.Qt.Checked:
+            [itm.setCheckState(QtCore.Qt.Checked) for itm in all_items if itm.text() != "Show All"]
+        elif item.text() != "Show All" and item.checkState() == QtCore.Qt.Unchecked:
+            all_items[0].setCheckState(QtCore.Qt.Unchecked)
+
+        if check_state.get("Show All") != QtCore.Qt.Checked:
+            checked_values = set(str(itm.text()) for itm in all_items if itm.checkState() == QtCore.Qt.Checked)
+            self.model.filter_set(col_ix, checked_values)
+        # self.list.blockSignals(False)
+
+    @QtCore.pyqtSlot(str)
     def outside_error(self, msg):
         self.set_status(msg)
 
-    def open_output_folder(self):
-        folder = SimpleJsonConfig().get_or_set_variable('output_folder', 'output')
-        if not os.path.exists(folder) or not os.path.isdir(folder):
-            os.mkdir(folder)
-        os.startfile(folder)
-
-    def open_config_file(self):
-        Popen('config.json', shell=True)
+    # def open_config_file(self):
+    #     Popen('config.json', shell=True)
 
     def to_excel(self, data, header):
         """Save displayed items to Excel file."""
@@ -224,7 +268,7 @@ class DatasheetView(QtGui.QWidget):
         if not data:
             self.set_status('No data was returned')
             return
-        folder = SimpleJsonConfig().get_or_set_variable('output_folder', 'output')
+        folder = 'output'
         if not os.path.exists(folder) or not os.path.isdir(folder):
             os.mkdir(folder)
         wb = xlwt.Workbook()
@@ -242,14 +286,15 @@ class DatasheetView(QtGui.QWidget):
         Popen(dest, shell=True)
 
     def add_query_criteria(self, name, text, type):
-        self.query.add_criteria(field_name=name, value=text(), field_type=type)
+        self.model.query.add_criteria(field_name=name, value=text(), field_type=type)
 
     def reset_query(self):
         for key, val in self.query_controls.items():
             val.handle.setText('')
         self.txt_search.setText('')
-        self.query.reset()
+        self.model.query.reset()
         self.model.full_reset()
+        self.set_status("")
 
     def hide_query_designer(self):
         self.layout.removeItem(self.qry_layout)
@@ -269,9 +314,9 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(self.qry_layout, 0, 0, 1, 1, QtCore.Qt.AlignTop)
         self.layout.setColumnStretch(0, 1)
 
-    @QtCore.pyqtSlot(int)
-    def show_rows_returned(self, ct):
-        self.set_status('The pull was successful.  Rows = {}'.format(ct))
+    @QtCore.pyqtSlot(str)
+    def show_rows_returned(self, msg):
+        self.set_status('{}'.format(msg))
 
     def query_layout(self):
         """Populate a layout with filter controls"""
@@ -314,7 +359,7 @@ class DatasheetView(QtGui.QWidget):
             , 'str':   str_handler
         }
 
-        for field_name, field_type in self.query.filter_options[:10]:
+        for field_name, field_type in self.model.query.filter_options[:10]:
             handlers.get(field_type)(field_name)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
@@ -322,12 +367,12 @@ class DatasheetView(QtGui.QWidget):
         layout.addWidget(self.btn_reset_query, current_row, 0, 1, 1)
 
         self.btn_pull = QtGui.QPushButton('&Pull')
-        self.btn_pull.clicked.connect(self.model.pull)
+        self.btn_pull.clicked.connect(self.pull)
         layout.addWidget(self.btn_pull, current_row, 1, 1, 1)
 
         return layout
 
-    @Slot()
+    @QtCore.pyqtSlot()
     def refresh_summary(self):
         for i, (key, val) in enumerate(self.model.totals.items()):
             measure = QtGui.QTableWidgetItem(key)
@@ -361,54 +406,39 @@ class MainView(QtGui.QDialog):
         super(MainView, self).__init__(parent
             , QtCore.Qt.WindowMinimizeButtonHint | QtCore.Qt.WindowMaximizeButtonHint)
 
+        app_config = SimpleJsonConfig(os.path.join('config', 'app.json'))
+        app_name = app_config.get_or_set_variable('app_name', 'TestApp')
+        datasheets = app_config.get_or_set_variable(
+            'datasheets', {
+                'Customers': os.path.join('config', 'customer_config.json')
+                , 'Customers2': os.path.join('config', 'customer_config2.json')
+            }
+        )
+
+        self.setWindowTitle(app_name)
+
         tabs = QtGui.QTabWidget()
-        ds = DatasheetView()
-        tabs.addTab(ds, 'PeopleNet')
-        # tabs.addTab(DatasheetView(), 'Books2')
+        for name, config in sorted(datasheets.items()):
+            tabs.addTab(DatasheetView(config=config), name)
 
         mainLayout = QtGui.QVBoxLayout()
         self.menubar = QtGui.QMenuBar()
         mainLayout.addWidget(self.menubar)
         filemenu = self.menubar.addMenu('&File')
-        filemenu.addAction('Open Output Folder', ds.open_output_folder)
-        filemenu.addAction('Open Settings File', ds.open_config_file)
-        filemenu = self.menubar.addMenu('&View')
-        filemenu.addAction('Show Query Designer', ds.show_query_designer)
-        filemenu.addAction('Hide Query Designer', ds.hide_query_designer)
-        filemenu = self.menubar.addMenu('&Export')
-        filemenu.addAction('Export Visible', ds.export_visible)
-        filemenu.addAction('Export Results', ds.export_results)
+        filemenu.addAction('Open Output Folder', self.open_output_folder)
+        # filemenu.addAction('Open Settings File', ds.open_config_file)
+        # filemenu = self.menubar.addMenu('&View')
+        # filemenu.addAction('Show Query Designer', ds.show_query_designer)
+        # filemenu.addAction('Hide Query Designer', ds.hide_query_designer)
+        # filemenu = self.menubar.addMenu('&Export')
+        # filemenu.addAction('Export Visible', ds.export_visible)
+        # filemenu.addAction('Export Results', ds.export_results)
 
         mainLayout.addWidget(tabs)
         self.setLayout(mainLayout)
 
-
-if __name__ == '__main__':
-    logger = rotating_log('error')
-    app = QtGui.QApplication(sys.argv)
-    try:
-        # app.setStyle('cleanlooks')
-        app.setStyle("plastique")
-        with open('darkcity.css', 'r') as fh:
-            style_sheet = fh.read()
-        app.setStyleSheet(style_sheet)
-
-    #   set font (we set it here to more easily keep it consistent)
-        font = QtGui.QFont("Arial", 11)
-        app.setFont(font)
-
-        icon = QtGui.QIcon('app.ico')
-        app.setWindowIcon(icon)
-
-        main_view = MainView()
-        main_view.showMaximized()
-        main_view.setWindowTitle('PeopleNet')
-        app.exec_()
-        sys.exit(0)
-        # os._exit(0)
-    except SystemExit:
-        print("Closing Window...")
-    except Exception as e:
-        logger.error(sys.exc_info()[1])
-        logger.error(str(e))
-        sys.exit(app.exec_())
+    def open_output_folder(self):
+        folder = SimpleJsonConfig().get_or_set_variable('output_folder', 'output')
+        if not os.path.exists(folder) or not os.path.isdir(folder):
+            os.mkdir(folder)
+        os.startfile(folder)

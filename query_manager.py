@@ -1,32 +1,37 @@
-"""This module is responsible for creating the queries to send to the view to pull.
+"""This module is responsible for procuring data for the model to prep and send to view.
 
-The QueryManager class is essentially the Controller in an MVC paradigm.  It only
-talks to the model, and the model relays the information to the view.
+FLOW OF INFORMATION
+View (Input) -> Model -> Query Manager -> Data -> Query Manager -> Model -> View (Display):
+
+No shortcuts allowed.
 """
 from collections import namedtuple, OrderedDict
-# from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 import sqlite3
+import time
 
-from config import SimpleJsonConfig
+from json_config import SimpleJsonConfig
 from PyQt4 import QtCore
 
 from messenger import global_message_queue
+
 
 Field = namedtuple('Field', 'name, type, filterable')
 
 class QueryManager(QtCore.QObject):
     """This class accepts criteria, compiles them, and returns a valid sql query."""
-    query_error = QtCore.pyqtSignal(str)
-    query_results = QtCore.pyqtSignal(list)
+    query_error_signal = QtCore.pyqtSignal(str)
+    query_results_signal = QtCore.pyqtSignal(list)
+    rows_returned_signal = QtCore.pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, config):
         super(QueryManager, self).__init__()
-        cfg = SimpleJsonConfig()
+        cfg = SimpleJsonConfig(json_path=config)
         cfg.config_errored.connect(self.configuration_error)
         self._db = cfg.get_or_set_variable(key='db_path', default_value='test.db')
         self._table = cfg.get_or_set_variable(key='table', default_value='Customers')
-        self._order_by = cfg.get_or_set_variable('order_by', 'FirstName')
+        self._order_by = cfg.get_or_set_variable('order_by', '')
         self._max_rows = cfg.get_or_set_variable('max_rows', 1000)
         self._fields = cfg.get_or_set_variable(
             'fields', [
@@ -38,7 +43,6 @@ class QueryManager(QtCore.QObject):
             ]
         )
         # [DatabaseName, DisplayName, type, fiterable]
-        self._field_types = cfg.field_types()
         self._criteria = {}
         self._qry_pool = QueryThreadPool()
 
@@ -56,7 +60,7 @@ class QueryManager(QtCore.QObject):
 
             Defaults to +/- 0.01
             """
-            return '(NULLIF({name}, 0) >= {val} - 0.01 and NULLIF({name}, 0) <= {val} + 0.01)'\
+            return '({name} >= {val} - 0.01 AND {name} <= {val} + 0.01)'\
                 .format(name=field_name, val=value)
 
         def int_wrapper():
@@ -73,7 +77,7 @@ class QueryManager(QtCore.QObject):
             , 'int': int_wrapper
             , 'str': str_wrapper
         }
-        # field_type = self._field_types[field_name]
+
         if field_type == 'date_start':
             key = '{}_start'.format(field_name)
         elif field_type == 'date_end':
@@ -93,13 +97,10 @@ class QueryManager(QtCore.QObject):
 
     @QtCore.pyqtSlot(str)
     def configuration_error(self, msg) -> None:
-        self.query_error.emit(msg)
-        # simply pass the message along
-        # We don't want a race to display the configuration and sql errors
-        #   to the view.
+        self.query_error_signal.emit(msg)
 
     @property
-    def fields(self):
+    def fields(self) -> dict:
         """Return a dictionary of Field tuples (name, type, filterable)."""
 
         return OrderedDict({
@@ -107,6 +108,10 @@ class QueryManager(QtCore.QObject):
             for i, val
             in enumerate(self._fields)
         })
+
+    def field_types(self) -> dict:
+        if self._fields:
+            return {val[0]: val[2] for val in self._fields}
 
     @property
     def filter_options(self):
@@ -138,33 +143,45 @@ class QueryManager(QtCore.QObject):
                 , database_path=self._db
                 , fields=self.fields
                 , max_rows=self._max_rows)
-            new_thread.results_pulled.connect(self.got_results)
-            new_thread.query_errored.connect(self.query_thread_errored)
+            new_thread.results_returned_signal.connect(self.query_results_signal.emit)
+            new_thread.rows_returned_signal.connect(self.rows_returned_signal.emit)
+            new_thread.query_errored_signal.connect(global_message_queue.error_signal.emit)
             self._qry_pool.add_thread(new_thread)
-            # self._qry_pool.start()
             new_thread.start()
         except Exception as e:
-            self.query_error.emit(str(e))
+            self.query_error_signal.emit(str(e))
 
     def reset(self):
         self._criteria = {}
 
-    @QtCore.pyqtSlot(str)
-    def got_results(self, query_results):
-        self.query_results.emit(query_results)
+    @property
+    def table(self):
+        if re.match('.*[.]sql$', self._table): # table name is a path to a sql query
+            fp = os.path.join('sql', self._table)
+            with open(fp, 'r') as fh:
+                qry = ' '.join([line.replace(r'\n', '') for line in fh.readlines()])
+                return '({})'.format(qry)
+        else:
+            return self._table
 
     @QtCore.pyqtSlot(str)
     def query_thread_errored(self, error_msg):
-        self.query_error.emit(error_msg)
+        self.query_error_signal.emit(error_msg)
 
     @property
     def select_statement(self):
         fieldnames = [val[0] for val in self._fields]
-        return "SELECT {fields} FROM {table}".format(fields=", ".join(fieldnames), table=self._table)
+        return "SELECT {fields} FROM {table}".format(fields=", ".join(fieldnames), table=self.table)
 
     @property
     def sql(self):
         return ' '.join((self.select_statement, self.where_clause, self.order_by, self.max_rows))
+
+    @property
+    def str_criteria(self) -> str:
+        if self._criteria:
+            return '(' + '; '.join([criteria for criteria in self._criteria.values()]) + ')'
+        return 'top {} rows'.format(self._max_rows)
 
     @property
     def where_clause(self):
@@ -186,9 +203,9 @@ def iterrows(cursor, chunksize=1000, max_rows=1000):
             yield result
 
 class QueryRunner(QtCore.QThread):
-    results_pulled = QtCore.pyqtSignal(list)
-    query_errored = QtCore.pyqtSignal(str)
-    rows_returned = QtCore.pyqtSignal(int)
+    results_returned_signal = QtCore.pyqtSignal(list)
+    query_errored_signal = QtCore.pyqtSignal(str)
+    rows_returned_signal = QtCore.pyqtSignal(str)
 
     def __init__(self, query, database_path, fields, max_rows=1000):
         super(QueryRunner, self).__init__()
@@ -196,6 +213,7 @@ class QueryRunner(QtCore.QThread):
         self._db = database_path
         self._max_rows = max_rows
         self._fields = fields
+        self._start_time = time.time()
 
     def run(self):
         try:
@@ -209,7 +227,7 @@ class QueryRunner(QtCore.QThread):
             self.process_results(results)
         except Exception as e:
             err_msg = 'Query execution error: {}'.format(e)
-            self.query_errored.emit(err_msg)
+            self.query_errored_signal.emit(err_msg)
 
     def process_results(self, results):
         try:
@@ -219,17 +237,23 @@ class QueryRunner(QtCore.QThread):
                         results[row][i] = col or 0.0
                     else:
                         results[row][i] = col or ''
-            global_message_queue.rows_returned_signal.emit(len(results))
-            self.results_pulled.emit(results)
+            return_msg = '{} rows returned in {} seconds'.format(len(results), int(time.time() - self._start_time))
+            self.rows_returned_signal.emit(return_msg)
+            self.results_returned_signal.emit(results)
         except Exception as e:
             err_msg = 'Error processing query results: {}'.format(e)
-            self.query_errored.emit(err_msg)
+            self.query_errored_signal.emit(err_msg)
 
     def stop(self):
         # self.terminate()
         self.exit()
 
+
 class QueryThreadPool(QtCore.QObject):
+
+    query_results_signal = QtCore.pyqtSignal(list)
+    rows_returned_signal = QtCore.pyqtSignal(str)
+
     def __init__(self):
         super(QueryThreadPool, self).__init__()
         self.pool = QtCore.QThreadPool()
@@ -245,24 +269,11 @@ class QueryThreadPool(QtCore.QObject):
         # for thread in self.threads.pop():
         #     self.pool.start(thread)
         thread = self.threads.pop()
+        thread.results_returned_signal.connect(self.query_results_signal.emit)
+        thread.rows_returned_signal.connect(self.rows_returned_signal.emit)
+
         self.pool.start(thread)
 
     def stop(self):
         for i in range(len(self.threads)):
             self.threads.pop().stop()
-
-        # for thread in self.threads:
-        #     thread.stop()
-        # self.threads = []
-
-if __name__ == '__main__':
-    qm = QueryManager()
-    # qm.add_order_by('FirstName')
-    # qm.add_criteria('FirstName', 'Mark')
-    # qm.add_criteria('LastName', 'Stefanovic')
-    print('sql:', qm.sql)
-    print('results:', qm.results())
-    print('headers:', qm.headers)
-    print('filters:', qm.filter_options)
-    print(qm.fields)
-    print(qm.fields[0])

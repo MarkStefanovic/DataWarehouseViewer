@@ -15,7 +15,8 @@ if __name__ == '__main__':
     try:
         # app.setStyle('cleanlooks')
         app.setStyle("plastique")
-        with open('darkcity.css', 'r') as fh:
+        css_path = os.path.join('css', 'darkcity.css')
+        with open(css_path, 'r') as fh:
             style_sheet = fh.read()
         app.setStyleSheet(style_sheet)
 
@@ -23,16 +24,15 @@ if __name__ == '__main__':
         font = QtGui.QFont("Arial", 11)
         app.setFont(font)
 
-        icon = QtGui.QIcon('app.ico')
+        icon_path = os.path.join('images', 'app.ico')
+        icon = QtGui.QIcon(icon_path)
         app.setWindowIcon(icon)
 
         main_view = MainView()
         main_view.showMaximized()
-        main_view.setWindowTitle('PeopleNet')
         app.exec_()
         global_message_queue.exit()
         sys.exit(0)
-        # os._exit(0)
     except SystemExit:
         print("Closing Window...")
         os._exit(0)  # cheap hack

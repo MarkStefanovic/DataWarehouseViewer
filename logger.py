@@ -1,5 +1,6 @@
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import os
 
 
 def rotating_log(error_level: str='error'):
@@ -13,7 +14,8 @@ def rotating_log(error_level: str='error'):
 
     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     formatter = logging.Formatter(format)
-    handler = TimedRotatingFileHandler('rotating.log', when='m', interval=1, backupCount=1)
+    fp = os.path.join('logs', 'rotating.log')
+    handler = TimedRotatingFileHandler(fp, when='m', interval=1, backupCount=1)
     handler.setLevel(logging.INFO)
     handler.setFormatter(formatter)
     logger = logging.getLogger("Rotating Log")

@@ -30,7 +30,7 @@ from PyQt4 import QtCore
 class SimpleJsonConfig(QtCore.QObject):
     config_errored = QtCore.pyqtSignal(str)
 
-    def __init__(self, json_path='config.json'):
+    def __init__(self, json_path='config\config.json'):
         """Initialize an instance of the SimpleJsonConfig class."""
         super(SimpleJsonConfig, self).__init__()
         self.json_path = json_path
@@ -48,11 +48,6 @@ class SimpleJsonConfig(QtCore.QObject):
         if self.variable(key) != val:
             self._cache[key] = val
             self.save()
-
-    def field_types(self) -> dict:
-        fields = self._cache.get('fields')
-        if fields:
-            return {val[0]: val[2] for val in fields}
 
     def get_variable(self, key):
         """Lookup a configuration variable's value using the variable's name."""
@@ -75,7 +70,7 @@ class SimpleJsonConfig(QtCore.QObject):
             self.config_errored.emit("Config file config.json not found in current directory")
             return {}
         except Exception as e:
-            self.config_errored.emit("Configuration error: " + str(e))
+            self.config_errored.emit("Configuration error: {}".format(e))
             return {}
 
     def save(self) -> None:
@@ -83,6 +78,8 @@ class SimpleJsonConfig(QtCore.QObject):
         with open(self.json_path, 'w') as fh:
             json.dump(self._cache, indent=4, fp=fh)
 
+
+global_config = SimpleJsonConfig('app.json')
 
 if __name__ == "__main__":
     import doctest
