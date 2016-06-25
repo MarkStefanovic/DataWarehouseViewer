@@ -33,6 +33,7 @@ class DatasheetView(QtGui.QWidget):
         self.table.setModel(self.model)
 
         self.table.resizeColumnsToContents()
+        # self.table.setSizeAdjustPolicy(QtGui.QAbstractScrollArea.AdjustToContents) only works with Qt5
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -53,7 +54,7 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(self.qry_layout, 0, 0, 1, 1, QtCore.Qt.AlignTop)
 
         ds_layout = QtGui.QGridLayout()
-        ds_layout.setColumnStretch(3, 1)
+        # ds_layout.setColumnStretch(3, 1)
         ds_layout.setColumnStretch(2, 4)
         ds_layout.addWidget(self.btn_reset, 0, 0, 1, 1)
         ds_layout.addWidget(self.lbl_search, 0, 1, 1, 1)
@@ -70,13 +71,34 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
 
     #   CONNECT SIGNALS
-        self.model.filters_changed_signal.connect(self.refresh_summary)
+    #     self.model.filters_changed_signal.connect(self.refresh_summary)
+        self.model.totals_changed_signal.connect(self.refresh_summary)
         self.model.model_error_signal.connect(self.outside_error)
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
-        # self.model.filters_changed_signal.connect(self.reset_status)
         self.model.filters_changed_signal.connect(self.table.resizeColumnsToContents)
+        self.model.rows_exported_signal.connect(self.show_rows_exported)
         self.model.rows_returned_signal.connect(self.show_rows_returned)
+
+    def exit(self):
+        self.stop_everything.emit()
+
+    def export_all(self) -> None:
+        self.set_status('Exporting top 500K rows')  # TODO: change to config variable at app level
+        self.model.export()
+
+    def export_visible(self) -> None:
+        self.to_excel(data=self.model._modified_data, header=self.model._query.headers)
+
+    @QtCore.pyqtSlot(int)
+    def filter_col_like(self, col_ix):
+        self.model.filter_like(val=self.col_like.text(), col_ix=col_ix)
+
+    def set_status(self, msg, duration=None) -> None:
+        if duration:
+            self.statusbar.showMessage(msg, duration)
+        else:
+            self.statusbar.showMessage(msg)
 
     def get_all_selected_ids(self):
         """ returns the selected primary key of the selected row """
@@ -91,24 +113,18 @@ class DatasheetView(QtGui.QWidget):
             selected_ids.append(id)
         return selected_ids
 
-    def exit(self):
-        self.stop_everything.emit()
-
-    # def export_results(self) -> None:
-    #     self.to_excel(data=self.model._original_data, header=self.model.query.headers)
-    #
-    def export_visible(self) -> None:
-        self.to_excel(data=self.model._modified_data, header=self.model.query.headers)
-
-    @QtCore.pyqtSlot(int)
-    def filter_col_like(self, col_ix):
-        self.model.filter_like(val=self.col_like.text(), col_ix=col_ix)
-
-    def set_status(self, msg, duration=None) -> None:
-        if duration:
-            self.statusbar.showMessage(msg, duration)
-        else:
-            self.statusbar.showMessage(msg)
+    def hide_query_designer(self):
+        self.layout.removeItem(self.qry_layout)
+        if self.qry_layout is not None:
+            while self.qry_layout.count():
+                item = self.qry_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+                else:
+                    self.clearLayout(item.layout())
+        self.qry_layout.deleteLater()
+        self.layout.setColumnStretch(0, 0)
 
     def keyPressEvent(self, event):
         if event.matches(QtGui.QKeySequence.Copy):
@@ -147,7 +163,7 @@ class DatasheetView(QtGui.QWidget):
         QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
-        self.set_status("{}: Pulling {}".format(timestr(), self.model.query.str_criteria))
+        self.set_status("{}: Pulling {}".format(timestr(), self.model._query.str_criteria))
         self.model.pull()
 
     def contextMenuEvent(self, event):
@@ -197,19 +213,9 @@ class DatasheetView(QtGui.QWidget):
             i.setCheckState(check_state)
             self.list.addItem(i)
 
-        # show_all = QtGui.QListWidgetItem("Show All")
-        # show_all.setFlags(show_all.flags() | QtCore.Qt.ItemIsUserCheckable)
-        # show_all.setCheckState(QtCore.Qt.Checked)
-        # self.list.addItem(show_all)
         add_item("Show All")
         add_item("None", QtCore.Qt.Unchecked)
         [add_item(itm) for itm in self.model.distinct_values(col_ix)]
-        # for itm in self.model.distinct_values(col_ix):
-        #     add_item(itm)
-            # i = QtGui.QListWidgetItem('%s' % item)
-            # i.setFlags(i.flags() | QtCore.Qt.ItemIsUserCheckable)
-            # i.setCheckState(QtCore.Qt.Checked)
-            # self.list.addItem(i)
         self.list.itemChanged.connect(partial(self.on_list_selection_changed, col_ix=col_ix))
         menu.addSeparator()
 
@@ -315,7 +321,7 @@ class DatasheetView(QtGui.QWidget):
         """Save displayed items to Excel file."""
 
         if not data:
-            self.set_status('No data was returned')
+            # self.set_status('No data was returned')
             return
         folder = 'output'
         if not os.path.exists(folder) or not os.path.isdir(folder):
@@ -335,33 +341,24 @@ class DatasheetView(QtGui.QWidget):
         Popen(dest, shell=True)
 
     def add_query_criteria(self, name, text, type):
-        self.model.query.add_criteria(field_name=name, value=text(), field_type=type)
+        self.model._query.add_criteria(field_name=name, value=text(), field_type=type)
 
     def reset_query(self):
         for key, val in self.query_controls.items():
             val.handle.setText('')
         self.txt_search.setText('')
-        self.model.query.reset()
+        self.model._query.reset()
         self.model.full_reset()
         self.set_status("")
-
-    def hide_query_designer(self):
-        self.layout.removeItem(self.qry_layout)
-        if self.qry_layout is not None:
-            while self.qry_layout.count():
-                item = self.qry_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-                else:
-                    self.clearLayout(item.layout())
-        self.qry_layout.deleteLater()
-        self.layout.setColumnStretch(0, 0)
 
     def show_query_designer(self):
         self.qry_layout = self.query_layout()
         self.layout.addLayout(self.qry_layout, 0, 0, 1, 1, QtCore.Qt.AlignTop)
         self.layout.setColumnStretch(0, 1)
+
+    @QtCore.pyqtSlot(int)
+    def show_rows_exported(self, msg):
+        self.set_status('Rows exported {}...'.format(msg))
 
     @QtCore.pyqtSlot(str)
     def show_rows_returned(self, msg):
@@ -382,8 +379,8 @@ class DatasheetView(QtGui.QWidget):
             layout.addWidget(lbl, current_row, 0, 1, 1)
             layout.addWidget(txt, current_row, 1, 1, 1)
 
-            params = (name, txt.text, type)
-            cmd = lambda p=params, func=self.add_query_criteria: func(*params)
+            args = (name, txt.text, type)
+            cmd = lambda a=args, func=self.add_query_criteria: func(*args)
             txt.textChanged.connect(cmd)
 
             current_row += 1
@@ -408,22 +405,30 @@ class DatasheetView(QtGui.QWidget):
             , 'str':   str_handler
         }
 
-        for field_name, field_type in self.model.query.filter_options[:10]:
+        for field_name, field_type in self.model._query.filter_options[:10]:
             handlers.get(field_type)(field_name)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
         self.btn_reset_query.clicked.connect(self.reset_query)
         layout.addWidget(self.btn_reset_query, current_row, 0, 1, 1)
 
-        self.btn_pull = QtGui.QPushButton('&Pull')
+        pull_btn_txt = '&Show Top {} rows'.format(self.model._max_rows)
+        self.btn_pull = QtGui.QPushButton(pull_btn_txt)
         self.btn_pull.clicked.connect(self.pull)
         layout.addWidget(self.btn_pull, current_row, 1, 1, 1)
+        current_row += 1
+
+        export_btn_txt = 'E&xport Top {} rows'.format('500K')  # TODO: change to config option on app config
+        self.btn_export = QtGui.QPushButton(export_btn_txt)
+        self.btn_export.clicked.connect(self.export_all)
+        layout.addWidget(self.btn_export, current_row, 0, 1, 2)
 
         return layout
 
-    @QtCore.pyqtSlot()
-    def refresh_summary(self):
-        for i, (key, val) in enumerate(self.model.totals.items()):
+    @QtCore.pyqtSlot(dict)
+    def refresh_summary(self, totals):
+        self.summary.setRowCount(len(totals))
+        for i, (key, val) in enumerate(totals.items()):
             measure = QtGui.QTableWidgetItem(key)
             value = QtGui.QTableWidgetItem(val)
             value.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
@@ -437,15 +442,15 @@ class DatasheetView(QtGui.QWidget):
     def summary_frame(self):
         tbl = QtGui.QTableWidget()
 
-        tbl.setRowCount(len(self.model.totals))
+        tbl.setRowCount(0) #len(self.model.totals))
         tbl.setColumnCount(2)
         tbl.setAlternatingRowColors(True)
-        for i, (key, val) in enumerate(self.model.totals.items()):
-            measure = QtGui.QTableWidgetItem(key)
-            value = QtGui.QTableWidgetItem(val)
-            value.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
-            tbl.setItem(i, 0, measure)
-            tbl.setItem(i, 1, value)
+        # for i, (key, val) in enumerate(self.model.totals.items()):
+        #     measure = QtGui.QTableWidgetItem(key)
+        #     value = QtGui.QTableWidgetItem(val)
+        #     value.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+        #     tbl.setItem(i, 0, measure)
+        #     tbl.setItem(i, 1, value)
         tbl.setHorizontalHeaderLabels(['Measure', 'Value'])
         tbl.resizeColumnsToContents()
         return tbl

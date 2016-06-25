@@ -10,8 +10,6 @@ from messenger import global_message_queue
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
-
-    # global_message_queue = MessageQueue()
     try:
         # app.setStyle('cleanlooks')
         app.setStyle("plastique")

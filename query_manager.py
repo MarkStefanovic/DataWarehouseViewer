@@ -20,7 +20,7 @@ from messenger import global_message_queue
 Field = namedtuple('Field', 'name, type, filterable')
 
 class QueryManager(QtCore.QObject):
-    """This class accepts criteria, compiles them, and returns a valid sql query."""
+    """This class accepts criteria, compiles them, and returns a valid sql _query."""
     query_error_signal = QtCore.pyqtSignal(str)
     query_results_signal = QtCore.pyqtSignal(list)
     rows_returned_signal = QtCore.pyqtSignal(str)
@@ -32,6 +32,7 @@ class QueryManager(QtCore.QObject):
         self._db = cfg.get_or_set_variable(key='db_path', default_value='test.db')
         self._table = cfg.get_or_set_variable(key='table', default_value='Customers')
         self._order_by = cfg.get_or_set_variable('order_by', '')
+        self._max_export_rows = 500000  # TODO: change to config variable at app level
         self._max_rows = cfg.get_or_set_variable('max_rows', 1000)
         self._fields = cfg.get_or_set_variable(
             'fields', [
@@ -123,6 +124,13 @@ class QueryManager(QtCore.QObject):
         return [fld.name for fld in self.fields.values()]
 
     @property
+    def max_export_rows(self) -> str:
+        if self._max_export_rows > 0:
+            return "LIMIT {}".format(self._max_export_rows)
+        else:
+            return ""
+
+    @property
     def max_rows(self) -> str:
         if self._max_rows > 0:
             return "LIMIT {}".format(self._max_rows)
@@ -149,14 +157,15 @@ class QueryManager(QtCore.QObject):
             self._qry_pool.add_thread(new_thread)
             new_thread.start()
         except Exception as e:
-            self.query_error_signal.emit(str(e))
+            err_msg = "Query execution error: {}".format(e)
+            self.query_error_signal.emit(err_msg)
 
     def reset(self):
         self._criteria = {}
 
     @property
     def table(self):
-        if re.match('.*[.]sql$', self._table): # table name is a path to a sql query
+        if re.match('.*[.]sql$', self._table): # table name is a path to a sql _query
             fp = os.path.join('sql', self._table)
             with open(fp, 'r') as fh:
                 qry = ' '.join([line.replace(r'\n', '') for line in fh.readlines()])
@@ -176,6 +185,10 @@ class QueryManager(QtCore.QObject):
     @property
     def sql(self):
         return ' '.join((self.select_statement, self.where_clause, self.order_by, self.max_rows))
+
+    @property
+    def sql_export(self):
+        return ' '.join((self.select_statement, self.where_clause, self.order_by, self.max_export_rows))
 
     @property
     def str_criteria(self) -> str:
@@ -201,6 +214,7 @@ def iterrows(cursor, chunksize=1000, max_rows=1000):
             break
         for result in results:
             yield result
+
 
 class QueryRunner(QtCore.QThread):
     results_returned_signal = QtCore.pyqtSignal(list)
@@ -241,7 +255,7 @@ class QueryRunner(QtCore.QThread):
             self.rows_returned_signal.emit(return_msg)
             self.results_returned_signal.emit(results)
         except Exception as e:
-            err_msg = 'Error processing query results: {}'.format(e)
+            err_msg = 'Error processing _query results: {}'.format(e)
             self.query_errored_signal.emit(err_msg)
 
     def stop(self):
