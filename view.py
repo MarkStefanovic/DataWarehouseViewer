@@ -2,6 +2,7 @@
 
 from collections import namedtuple, OrderedDict
 from functools import partial
+import logging
 import os
 from subprocess import Popen
 
@@ -17,6 +18,7 @@ class DatasheetView(QtGui.QWidget):
     """
     This class takes a model as an input and creates an editable datasheet therefrom.
     """
+    exit_signal = QtCore.pyqtSignal()
 
     def __init__(self, config, parent=None):
         super(DatasheetView, self).__init__()
@@ -29,6 +31,8 @@ class DatasheetView(QtGui.QWidget):
         self.table.setSortingEnabled(True)
         self.query_controls = {}
         self.menu = QtGui.QMenu(self)
+
+        self.logger = logging.getLogger('main.view.DatasheetView')
 
         self.table.setModel(self.model)
 
@@ -72,8 +76,9 @@ class DatasheetView(QtGui.QWidget):
 
     #   CONNECT SIGNALS
     #     self.model.filters_changed_signal.connect(self.refresh_summary)
+        self.exit_signal.connect(self.model.exit_signal.emit)
         self.model.totals_changed_signal.connect(self.refresh_summary)
-        self.model.model_error_signal.connect(self.outside_error)
+        self.model.error_signal.connect(self.outside_error)
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
         self.model.filters_changed_signal.connect(self.table.resizeColumnsToContents)
@@ -88,7 +93,7 @@ class DatasheetView(QtGui.QWidget):
         self.model.export()
 
     def export_visible(self) -> None:
-        self.to_excel(data=self.model._modified_data, header=self.model._query.headers)
+        self.to_excel(data=self.model._modified_data, header=self.model._query_manager.headers)
 
     @QtCore.pyqtSlot(int)
     def filter_col_like(self, col_ix):
@@ -163,7 +168,7 @@ class DatasheetView(QtGui.QWidget):
         QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
-        self.set_status("{}: Pulling {}".format(timestr(), self.model._query.str_criteria))
+        self.set_status("{}: Pulling {}".format(timestr(), self.model._query_manager.str_criteria))
         self.model.pull()
 
     def contextMenuEvent(self, event):
@@ -341,13 +346,13 @@ class DatasheetView(QtGui.QWidget):
         Popen(dest, shell=True)
 
     def add_query_criteria(self, name, text, type):
-        self.model._query.add_criteria(field_name=name, value=text(), field_type=type)
+        self.model._query_manager.add_criteria(field_name=name, value=text(), field_type=type)
 
     def reset_query(self):
         for key, val in self.query_controls.items():
             val.handle.setText('')
         self.txt_search.setText('')
-        self.model._query.reset()
+        self.model._query_manager.reset()
         self.model.full_reset()
         self.set_status("")
 
@@ -405,7 +410,7 @@ class DatasheetView(QtGui.QWidget):
             , 'str':   str_handler
         }
 
-        for field_name, field_type in self.model._query.filter_options[:10]:
+        for field_name, field_type in self.model._query_manager.filter_options[:10]:
             handlers.get(field_type)(field_name)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
@@ -456,6 +461,9 @@ class DatasheetView(QtGui.QWidget):
         return tbl
 
 class MainView(QtGui.QDialog):
+
+    exit_signal = QtCore.pyqtSignal()
+
     def __init__(self, parent=None):
         super(MainView, self).__init__(parent
             , QtCore.Qt.WindowMinimizeButtonHint | QtCore.Qt.WindowMaximizeButtonHint)
@@ -473,7 +481,9 @@ class MainView(QtGui.QDialog):
 
         tabs = QtGui.QTabWidget()
         for name, config in sorted(datasheets.items()):
-            tabs.addTab(DatasheetView(config=config), name)
+            ds = DatasheetView(config=config)
+            self.exit_signal.connect(ds.exit_signal.emit)
+            tabs.addTab(ds, name)
 
         mainLayout = QtGui.QVBoxLayout()
         self.menubar = QtGui.QMenuBar()

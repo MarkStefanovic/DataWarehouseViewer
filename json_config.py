@@ -28,7 +28,7 @@ from PyQt4 import QtCore
 
 
 class SimpleJsonConfig(QtCore.QObject):
-    config_errored = QtCore.pyqtSignal(str)
+    error_signal = QtCore.pyqtSignal(str)
 
     def __init__(self, json_path='config\config.json'):
         """Initialize an instance of the SimpleJsonConfig class."""
@@ -67,10 +67,10 @@ class SimpleJsonConfig(QtCore.QObject):
             with open(os.path.abspath(self.json_path), 'r') as fh:
                 return json.load(fh)
         except FileNotFoundError:
-            self.config_errored.emit("Config file config.json not found in current directory")
+            self.error_signal.emit("Config file config.json not found in current directory")
             return {}
         except Exception as e:
-            self.config_errored.emit("Configuration error: {}".format(e))
+            self.error_signal.emit("Configuration error: {}".format(e))
             return {}
 
     def save(self) -> None:

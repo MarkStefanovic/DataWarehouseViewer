@@ -8,11 +8,6 @@ import xlwt
 from utilities import iterrows
 
 
-class ExitException(Exception):
-    def __init__(self,*args,**kwargs):
-        Exception.__init__(self, *args, **kwargs)
-
-
 class SqlSignals(QtCore.QObject):
     error = QtCore.pyqtSignal(str)
     exit = QtCore.pyqtSignal()
@@ -21,7 +16,7 @@ class SqlSignals(QtCore.QObject):
 
 
 class ExportSql(QtCore.QObject):
-
+    """This class manages the currently active ExportSql thread"""
     def __init__(self):
         super(ExportSql, self).__init__()
         self.signals = SqlSignals()
@@ -38,7 +33,7 @@ class ExportSql(QtCore.QObject):
 
 class ExportSqlThread(QtCore.QThread):
     """
-     Writes a sql _query to an Excel workbook.
+     Writes a sql _query_manager to an Excel workbook.
     """
     def __init__(self, sql, db_path):
         super(ExportSqlThread, self).__init__()
@@ -81,7 +76,7 @@ class ExportSqlThread(QtCore.QThread):
             wb.save(output_path)
             Popen(output_path, shell=True)
         except Exception as e:
-            err_msg = "Error exporting _query results: {}".format(e)
+            err_msg = "Error exporting _query_manager results: {}".format(e)
             self.signals.error.emit(err_msg)
 
     def stop(self):

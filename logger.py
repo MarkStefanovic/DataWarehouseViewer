@@ -1,10 +1,11 @@
 import functools
+import inspect
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
 
 
-def rotating_log(error_level: str='error'):
+def rotating_log(name: str='main', error_level: str='error'):
     """Return a handle to a logger that messages can be sent to for storage."""
 
     error_levels = {
@@ -19,37 +20,27 @@ def rotating_log(error_level: str='error'):
     handler = TimedRotatingFileHandler(fp, when='D', interval=1, backupCount=1)
     handler.setLevel(logging.INFO)
     handler.setFormatter(formatter)
-    logger = logging.getLogger("main")
+    logger = logging.getLogger(name)
     logger.setLevel(error_levels.get(error_level, logging.ERROR))
     logger.addHandler(handler)
     return logger
 
 
-# def log_exception(function):
-#     """
-#     A decorator that wraps the passed in function and logs
-#     exceptions should one occur
-#
-#     Example usage:
-#         @log_exception
-#         def zero_divide():
-#             1 / 0
-#     """
-#     # global_logger = rotating_log('error')
-#
-#     @functools.wraps(function)
-#     def wrapper(*args, **kwargs):
-#         nonlocal global_logger
-#         try:
-#             return function(*args, **kwargs)
-#         except:
-#             # log the exception
-#             err = "There was an exception in  "
-#             err += function.__name__
-#             global_logger.exception(err)
-#
-#             # re-raise the exception
-#             raise
-#     return wrapper
+def log_error(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if not logging.getLogger('main').handlers:
+            rotating_log()
+        log_name = '{}.{}.{}'.format(
+            'main'
+            , func.__module__
+            , func.__name__
+        )
+        current_logger = logging.getLogger(log_name)
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            current_logger.exception(str(e))
+            raise e
+    return wrapper
 
-global_logger = rotating_log('error')

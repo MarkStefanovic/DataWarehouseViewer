@@ -4,12 +4,14 @@ import sys
 from PyQt4 import QtGui
 
 from view import MainView
-from logger import rotating_log, global_logger
-from messenger import global_message_queue
+from logger import rotating_log
 
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
+    main_view = MainView()
+    main_logger = rotating_log('main')
+
     try:
         # app.setStyle('cleanlooks')
         app.setStyle("plastique")
@@ -26,15 +28,14 @@ if __name__ == '__main__':
         icon = QtGui.QIcon(icon_path)
         app.setWindowIcon(icon)
 
-        main_view = MainView()
         main_view.showMaximized()
         app.exec_()
-        global_message_queue.exit()
         sys.exit(0)
     except SystemExit:
         print("Closing Window...")
+        main_view.exit_signal.emit()
         os._exit(0)  # cheap hack
     except Exception as e:
-        global_logger.error(sys.exc_info()[1])
-        global_logger.error(str(e))
+        err_msg = "Error {}".format(e)
+        main_logger.error(err_msg)
         sys.exit(app.exec_())

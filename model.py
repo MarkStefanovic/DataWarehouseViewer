@@ -6,50 +6,49 @@ import threading
 
 from PyQt4 import QtCore
 
-from export_sql import ExportSql
-from messenger import global_message_queue
+from logger import log_error
 from query_manager import QueryManager
 from utilities import is_float
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
     filters_changed_signal = QtCore.pyqtSignal()
-    model_error_signal = QtCore.pyqtSignal(str)
+    error_signal = QtCore.pyqtSignal(str)
+    exit_signal = QtCore.pyqtSignal()
     rows_returned_signal = QtCore.pyqtSignal(str)
     totals_changed_signal = QtCore.pyqtSignal(dict)
     rows_exported_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, config):
         super(AbstractModel, self).__init__()
-        self._query = QueryManager(config)
+        self._query_manager = QueryManager(config)
         self._original_data = []
         self._modified_data = []
-        self._header = self._query.headers
-        self._max_rows = self._query._max_rows
+        self._header = self._query_manager.headers
+        self._max_rows = self._query_manager._max_rows
 
-        self.exporter = ExportSql()
-
-        #   connect signals
-        self._query.query_error_signal.connect(self.query_errored)
-        self._query.query_results_signal.connect(self.update_view)
-        self._query.rows_returned_signal.connect(self.rows_returned_signal.emit)  # pass along
+    #   Connect Signals
+        self.exit_signal.connect(self._query_manager.exit_signal.emit)
+        self._query_manager.error_signal.connect(self.error_signal.emit)
+        self._query_manager.query_results_signal.connect(self.update_view)
+        self._query_manager.rows_exported_signal.connect(self.rows_exported_signal.emit)
+        self._query_manager.rows_returned_signal.connect(self.rows_returned_signal.emit)
         self.filters_changed_signal.connect(self.calculate_totals)
-        self.exporter.signals.rows_exported.connect(self.rows_exported_signal.emit)  # pass along
 
     def calculate_totals(self) -> dict:
         threading.Thread(target=self.calculate_totals_thread).start()
 
     def calculate_totals_thread(self):
         totals = {}
-        for i, fld in self._query.fields.items():
+        for i, fld in self._query_manager.fields.items():
             if fld.type == 'float':
                 total = sum([val[i] for val in self._modified_data if
                     is_float(val[i])])
                 avg = total / self.rowCount() if self.rowCount() > 0 else 0
-                totals['{} Sum'.format(fld.name)] = '{:,.2f}'.format(
-                    float(total))
-                totals['{} Avg'.format(fld.name)] = '{:,.2f}'.format(
-                    float(avg))
+                totals['{} Sum'.format(fld.name)] = \
+                    '{:,.2f}'.format(float(total))
+                totals['{} Avg'.format(fld.name)] = \
+                    '{:,.2f}'.format(float(avg))
             elif fld.type == 'date':
                 minimum = min(
                     [val[i] for val in self._modified_data] or [0])
@@ -67,7 +66,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         #     ex.submit(calc_tot)
 
     def export(self):
-        self.exporter.start_pull(self._query.sql_export, self._query._db)
+        self._query_manager.export()
 
     def rowCount(self, parent=None):
         return len(self._modified_data) if self._modified_data else 0
@@ -75,6 +74,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def columnCount(self, parent=None):
         return len(self._modified_data[0]) if self._modified_data else 0
 
+    @log_error
     def data(self, index, role):
         # TODO: allow user to specify format in config file
         def formatter(value, fmt):
@@ -93,7 +93,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     return value
             return value
 
-        col_type = self._query.fields.get(index.column()).type
+        col_type = self._query_manager.fields.get(index.column()).type
         val = self._modified_data[index.row()][index.column()]
         try:
             if not index.isValid():
@@ -114,8 +114,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 return val
         except Exception as e:
             err_msg = 'Error modeling data: {}'.format(e)
-            global_message_queue.errored(err_msg)
-            # self.model_error_signal.emit(err_msg)
+            self.error_signal.emit(err_msg)
+            # self.error_signal.emit(err_msg)
 
     def distinct_values(self, col_ix):
         return sorted(set([val[col_ix] for val in self._modified_data]))
@@ -176,11 +176,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
         return self._header
 
     def pull(self):
-        self._query.pull()
+        self._query_manager.pull()
 
     @QtCore.pyqtSlot(str)
     def query_errored(self, msg):
-        self.model_error_signal.emit(msg)
+        self.error_signal.emit(msg)
 
     def reset(self):
         self.layoutAboutToBeChanged.emit()
@@ -211,9 +211,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 self._modified_data.reverse()
             self.layoutChanged.emit()
         except Exception as e:
-            self.model_error_signal(str(e))
+            self.error_signal(str(e))
 
-    @QtCore.pyqtSlot(str)
+    @QtCore.pyqtSlot(list)
     def update_view(self, results):
         try:
             self.layoutAboutToBeChanged.emit()
@@ -223,3 +223,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.layoutChanged.emit()
         except Exception as e:
             self.query_errored.emit(str(e))
+
+if __name__ == '__main__':
+    import os
+    m = AbstractModel(os.path.join('config', 'customer_config.json'))
+    m.export()
