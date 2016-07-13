@@ -23,21 +23,26 @@ Examples:
 """
 import json
 import os
+from typing import Dict, TypeVar
 
 from PyQt4 import QtCore
+
+
+JsonType = TypeVar('JsonType', float, int, list, str)
 
 
 class SimpleJsonConfig(QtCore.QObject):
     error_signal = QtCore.pyqtSignal(str)
 
-    def __init__(self, json_path='config\config.json'):
+    def __init__(self, json_path='config\config.json') -> None:
         """Initialize an instance of the SimpleJsonConfig class."""
         super(SimpleJsonConfig, self).__init__()
         self.json_path = json_path
-        self._cache = self.load()
+        self._cache = self.load()  # type: Dict[str, JsonType]
 
-    def variable(self, key) -> str:
-        return self._cache.get(key, '')
+    @property
+    def all_variables(self) -> dict:
+        return self._cache
 
     def set_variable(self, key, val) -> None:
         """Set the value of the configuration variable for the key specified and save it to disk.
@@ -49,14 +54,14 @@ class SimpleJsonConfig(QtCore.QObject):
             self._cache[key] = val
             self.save()
 
-    def get_variable(self, key):
+    def get_variable(self, key) -> JsonType:
         """Lookup a configuration variable's value using the variable's name."""
-        return self._cache.get(key)
+        return self.all_variables.get(key)
 
-    def get_or_set_variable(self, key, default_value):
+    def get_or_set_variable(self, key, default_value) -> JsonType:
         """Lookup the value of a configuration variable by name.  If it doesn't exist create it."""
         try:
-            return self._cache[key]
+            return self.get_variable(key)
         except KeyError:
             self.set_variable(key, default_value)
         return default_value
@@ -78,8 +83,10 @@ class SimpleJsonConfig(QtCore.QObject):
         with open(self.json_path, 'w') as fh:
             json.dump(self._cache, indent=4, fp=fh)
 
+    @property
+    def variable_names(self):
+        return sorted(v for v in self._cache.keys())
 
-global_config = SimpleJsonConfig('app.json')
 
 if __name__ == "__main__":
     import doctest
