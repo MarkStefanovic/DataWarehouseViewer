@@ -2,6 +2,7 @@ import os
 from PyQt4 import QtCore
 import sqlite3
 import time
+from typing import List
 
 from logger import log_error
 from utilities import iterrows
@@ -17,7 +18,8 @@ class QueryRunnerSignals(QtCore.QObject):
 
 class QueryRunnerThread(QtCore.QThread):
 
-    def __init__(self, query, database_path, fields, max_rows=1000):
+    def __init__(self, query: str, database_path: str, fields: List[tuple]
+                , max_rows: int=1000):
         super(QueryRunnerThread, self).__init__()
         self._qry = query
         self._db = database_path
@@ -28,7 +30,7 @@ class QueryRunnerThread(QtCore.QThread):
         self.stop_everything = False
 
     @log_error
-    def pull(self):
+    def pull(self) -> None:
         try:
             results = []
             con_str = 'file:/{}?mode=ro'.format(os.path.abspath(self._db))
@@ -41,11 +43,11 @@ class QueryRunnerThread(QtCore.QThread):
             if self.stop_everything: return
             self.process_results(results)
         except Exception as e:
-            err_msg = 'Query execution error: {}'.format(e)
+            err_msg = 'Query execution error: {err}; {qry}'.format(err=e, qry=self._qry)
             self.signals.error.emit(err_msg)
 
     @log_error
-    def process_results(self, results):
+    def process_results(self, results) -> None:
         try:
             for row, val in enumerate(results):
                 for i, col in enumerate(val):
@@ -60,10 +62,10 @@ class QueryRunnerThread(QtCore.QThread):
             err_msg = "Error exporting _query_manager results: {}".format(e)
             self.signals.error.emit(err_msg)
 
-    def run(self):
+    def run(self) -> None:
         self.pull()
 
-    def stop(self):
+    def stop(self) -> None:
         self.stop_everything = True
         self.exit()
         self.quit()

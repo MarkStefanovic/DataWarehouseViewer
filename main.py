@@ -1,3 +1,11 @@
+"""This app displays data from a database in a way that is easy to filter and export.
+
+FLOW OF INFORMATION
+View (Input) -> Model -> Query Manager -> Exporter|Runner -> Data -> Query Manager -> Model -> View (Display):
+
+No shortcuts are taken.
+"""
+
 import os
 import sys
 
@@ -5,7 +13,6 @@ from PyQt4 import QtGui
 
 from view import MainView
 from logger import rotating_log
-
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)

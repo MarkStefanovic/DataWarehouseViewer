@@ -16,7 +16,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
     error_signal = QtCore.pyqtSignal(str)
     exit_signal = QtCore.pyqtSignal()
     rows_returned_signal = QtCore.pyqtSignal(str)
-    totals_changed_signal = QtCore.pyqtSignal(dict)
     rows_exported_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, config):
@@ -25,7 +24,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self._original_data = []
         self._modified_data = []
         self._header = self._query_manager.headers
-        self._max_rows = self._query_manager._max_rows
+        self._max_rows = self._query_manager.max_display_rows
 
     #   Connect Signals
         self.exit_signal.connect(self._query_manager.exit_signal.emit)
@@ -33,40 +32,28 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self._query_manager.query_results_signal.connect(self.update_view)
         self._query_manager.rows_exported_signal.connect(self.rows_exported_signal.emit)
         self._query_manager.rows_returned_signal.connect(self.rows_returned_signal.emit)
-        self.filters_changed_signal.connect(self.calculate_totals)
-
-    def calculate_totals(self) -> dict:
-        threading.Thread(target=self.calculate_totals_thread).start()
-
-    def calculate_totals_thread(self):
-        totals = {}
-        for i, fld in self._query_manager.fields.items():
-            if fld.type == 'float':
-                total = sum([val[i] for val in self._modified_data if
-                    is_float(val[i])])
-                avg = total / self.rowCount() if self.rowCount() > 0 else 0
-                totals['{} Sum'.format(fld.name)] = \
-                    '{:,.2f}'.format(float(total))
-                totals['{} Avg'.format(fld.name)] = \
-                    '{:,.2f}'.format(float(avg))
-            elif fld.type == 'date':
-                minimum = min(
-                    [val[i] for val in self._modified_data] or [0])
-                maximum = max(
-                    [val[i] for val in self._modified_data] or [0])
-                totals['{} Min'.format(fld.name)] = str(minimum)
-                totals['{} Max'.format(fld.name)] = str(maximum)
-            else:
-                totals['{} DCount'.format(fld.name)] = str(
-                    len(set([val[i] for val in self._modified_data])))
-        valid_totals = OrderedDict({key: val for key, val in totals.items() if val})
-        self.totals_changed_signal.emit(valid_totals)
-
-        # with ThreadPoolExecutor(max_workers=1) as ex:
-        #     ex.submit(calc_tot)
+        # self.filters_changed_signal.connect(self.calculate_totals)
 
     def export(self):
         self._query_manager.export()
+
+    def field_totals(self, col_ix: int) -> list:
+        totals = []
+        fld = self._query_manager.fields.get(col_ix)
+        if fld.type == 'float':
+            total = sum(val[col_ix] for val in self._modified_data if is_float(val[col_ix]))
+            avg = total / self.rowCount() if self.rowCount() > 0 else 0
+            totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
+            totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
+        elif fld.type == 'date':
+            minimum = min(val[col_ix] for val in self._modified_data)
+            maximum = max(val[col_ix] for val in self._modified_data)
+            totals.append('{} Min \t = {}'.format(fld.name, minimum or 'Empty'))
+            totals.append('{} Max \t = {}'.format(fld.name, maximum or 'Empty'))
+        else:
+            totals.append('{} Distinct Count \t = {}'.format(fld.name
+                , len(set(val[col_ix] for val in self._modified_data))))
+        return totals
 
     def rowCount(self, parent=None):
         return len(self._modified_data) if self._modified_data else 0
@@ -80,6 +67,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
         def formatter(value, fmt):
             format_options = {
                 'currency': '${:,.2f}'
+                , 'date': None
+                , 'datetime': None
                 , 'dollar': '${:,.0f}'
                 , 'standard': '{:,.2f}'
                 , 'str': None
@@ -111,6 +100,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 if col_type == 'float':
                     # and is_float(val): #re.match("^\d+\.\d+$", val):
                     return formatter(val, 'standard')
+                elif col_type == 'date':
+                    return val[:10]
                 return val
         except Exception as e:
             err_msg = 'Error modeling data: {}'.format(e)
@@ -118,7 +109,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             # self.error_signal.emit(err_msg)
 
     def distinct_values(self, col_ix):
-        return sorted(set([val[col_ix] for val in self._modified_data]))
+        return sorted(set(val[col_ix] for val in self._modified_data))
 
     def filter_equality(self, col_ix, val):
         self._modified_data = [x for x in self._modified_data if x[col_ix] == val]
@@ -211,7 +202,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 self._modified_data.reverse()
             self.layoutChanged.emit()
         except Exception as e:
-            self.error_signal(str(e))
+            err_msg = "Error sorting data: {}".format(e)
+            self.error_signal(err_msg)
 
     @QtCore.pyqtSlot(list)
     def update_view(self, results):
@@ -222,7 +214,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.filters_changed_signal.emit()
             self.layoutChanged.emit()
         except Exception as e:
-            self.query_errored.emit(str(e))
+            err_msg = "Error updating view: {}".format(e)
+            self.error_signal.emit(err_msg)
 
 if __name__ == '__main__':
     import os

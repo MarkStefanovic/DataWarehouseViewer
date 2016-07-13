@@ -1,10 +1,12 @@
 import os
 import sqlite3
 from subprocess import Popen
+import time
 
 from PyQt4 import QtCore
 import xlwt
 
+from logger import log_error
 from utilities import iterrows
 
 
@@ -15,14 +17,15 @@ class SqlSignals(QtCore.QObject):
     done = QtCore.pyqtSignal()
 
 
-class ExportSql(QtCore.QObject):
+class QueryExporter(QtCore.QObject):
     """This class manages the currently active ExportSql thread"""
-    def __init__(self):
-        super(ExportSql, self).__init__()
+
+    def __init__(self) -> None:
+        super(QueryExporter, self).__init__()
         self.signals = SqlSignals()
         self.thread = None
 
-    def start_pull(self, sql, db_path):
+    def start_pull(self, sql: str, db_path: str) -> None:
         self.signals.exit.emit()  # stop current thread
         self.thread = ExportSqlThread(sql, db_path)
         self.signals.exit.connect(self.thread.stop)
@@ -35,7 +38,7 @@ class ExportSqlThread(QtCore.QThread):
     """
      Writes a sql _query_manager to an Excel workbook.
     """
-    def __init__(self, sql, db_path):
+    def __init__(self, sql: str, db_path: str) -> None:
         super(ExportSqlThread, self).__init__()
         self._sql = sql
         self._db_path = db_path
@@ -43,7 +46,8 @@ class ExportSqlThread(QtCore.QThread):
         self.stop_everything = False
         #   stop thread in relatively save spots
 
-    def run(self):
+    @log_error
+    def run(self) -> None:
         try:
             folder = 'output'
             if not os.path.exists(folder) or not os.path.isdir(folder):
@@ -61,7 +65,10 @@ class ExportSqlThread(QtCore.QThread):
                     'font: colour white, bold True;'
                 )
                 headers = [cn[0] for cn in cursor.description]
-                [sht.write(0, i, x, header_style) for i, x in enumerate(headers)]
+                [
+                    sht.write(0, i, x, header_style)
+                    for i, x in enumerate(headers)
+                ]
                 n = 0
                 if self.stop_everything: return
                 for result in iterrows(cursor=cursor, chunksize=1000):
@@ -76,10 +83,11 @@ class ExportSqlThread(QtCore.QThread):
             wb.save(output_path)
             Popen(output_path, shell=True)
         except Exception as e:
-            err_msg = "Error exporting _query_manager results: {}".format(e)
+            err_msg = "Error exporting _query_manager results: {err}; {qry}"\
+                .format(err=e, qry=self._sql)
             self.signals.error.emit(err_msg)
 
-    def stop(self):
+    def stop(self) -> None:
         self.stop_everything = True
         self.exit()
         self.quit()

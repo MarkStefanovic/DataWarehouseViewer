@@ -1,8 +1,9 @@
 import functools
-import inspect
 import logging
-from logging.handlers import TimedRotatingFileHandler
 import os
+
+from logging.handlers import TimedRotatingFileHandler
+from utilities import rootdir
 
 
 def rotating_log(name: str='main', error_level: str='error'):
@@ -16,7 +17,7 @@ def rotating_log(name: str='main', error_level: str='error'):
 
     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     formatter = logging.Formatter(format)
-    fp = os.path.join('logs', 'rotating.log')
+    fp = os.path.join(rootdir(), 'logs', 'rotating.log')
     handler = TimedRotatingFileHandler(fp, when='D', interval=1, backupCount=1)
     handler.setLevel(logging.INFO)
     handler.setFormatter(formatter)
