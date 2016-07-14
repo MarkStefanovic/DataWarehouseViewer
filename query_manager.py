@@ -1,11 +1,11 @@
 """This module is responsible for procuring data for the model to prep and send to view.
 
 """
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict
 import os
 import re
 import string
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Union
 
 from json_config import SimpleJsonConfig
 from PyQt4 import QtCore
@@ -13,10 +13,13 @@ from PyQt4 import QtCore
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
+from typing import NamedTuple
+from utilities import sqlite_exec
 
-Field = namedtuple('Field', 'name type')
-Filter = namedtuple('Filter', 'field operator type')
-Operator = namedtuple('Operator', 'options default')
+Field = NamedTuple('Field', [('name', str), ('type', str)])
+Filter = NamedTuple('Filter', [('field', str), ('operator', str), ('type', str)])
+NumberRangeType = Union[int, float]
+Operator = NamedTuple('Operator', [('options', List[str]), ('default', str)])
 
 
 def operator_options(field: Field) -> Operator:
@@ -33,7 +36,7 @@ def operator_options(field: Field) -> Operator:
             default='Starts with')
     }
     try:
-        return operators.get(field.type)
+        return operators[field.type]  # type: OperatorType
     except IndexError:
         return Operator(options=[], default='')
 
@@ -51,20 +54,20 @@ def where_condition(field: Field, value: str, operator: str) -> Tuple[str, str]:
         >>> print(where_condition(fld, value='o', operator='='))
         (None, 'Unable to parse criteria: field=a, operator==, value=o: value is not numeric')
     """
-    def date_range(rng, field_name: str, inclusive=True):
+    def date_range(rng: int, field_name: str, inclusive=True):
         return "{n} {lop} date('{v}', '+{r} day') " \
             "AND {n} {gop} date('{v}', '-{r} day')".format(
             n=field_name, lop='<=' if inclusive else '<'
             , gop='>=' if inclusive else '>', v=value, r=rng
         )
 
-    def err_msg(msg: str=''):
+    def err_msg(msg: str='') -> str:
         return "Unable to parse criteria: field={n}, operator={o}, value={v}: {m}"\
             .format(n=field.name, o=operator, v=value, m=msg)
 
-    def number_range(rng, field_name: str, inclusive=True):
+    def number_range(rng: NumberRangeType, field_name: str, inclusive=True) -> str:
         return "{n} {l} {v} + {r} AND {n} {g} {v} - {r}".format(
-            n=field.name, l='<=' if inclusive else '<'
+            n=field_name, l='<=' if inclusive else '<'
             , g='>=' if inclusive else '>', v=value, r=rng
         )
 
@@ -72,39 +75,38 @@ def where_condition(field: Field, value: str, operator: str) -> Tuple[str, str]:
         '+/- 0.01': number_range(rng=0.01, field_name=field.name, inclusive=True)
         , '+/- 1': number_range(rng=1, field_name=field.name, inclusive=True)
         , 'Same day': date_range(rng=1, field_name=field.name, inclusive=False)
-    }
+    }  # type: Dict[str, str]
     textops = {
         'Like': "{n} LIKE '%{v}%'".format(n=field.name, v=value)
         , 'Starts with': "{n} LIKE '{v}%'".format(n=field.name, v=value)
         , 'Ends with': "{n} LIKE '%{v}'".format(n=field.name, v=value)
     }
     if not value:
-        return None, None
+        return '', ''
     elif field.type == 'str':
         val = value.replace("'", "''")
         if val.isalnum() and all(c in string.printable for c in val):
             if operator in textops.keys():
-                return textops.get(operator), None
-            return "{n} {o} '{v}'".format(n=field.name, o=operator, v=val), None
-        return None, err_msg("value is not a valid search string")
+                return textops.get(operator), ''
+            return "{n} {o} '{v}'".format(n=field.name, o=operator, v=val), ''
+        return '', err_msg("value is not a valid search string")
     elif field.type == 'date':
         if re.match(r"^\d{4}-\d{2}-\d{2}.*$", value):
             if operator in rangeops.keys():
-                return rangeops.get(operator), None
-            return "{n} {o} '{v}'".format(n=field.name, o=operator, v=value), None
-        return None, err_msg()
+                return rangeops.get(operator), ''
+            return "{n} {o} '{v}'".format(n=field.name, o=operator, v=value), ''
+        return '', err_msg()
     elif field.type in ('int', 'float'):
         if not re.match(r"^[0-9]*[.]?[0-9]*$", value):
-            return None, err_msg('value is not numeric')
+            return '', err_msg('value is not numeric')
         try:
             val = float(value)
             if operator in rangeops.keys():
-                return rangeops.get(operator), None
-            return "{n} {o} {v}".format(n=field.name, o=operator, v=val), None
-        except Exception as e:
-            print(str(e))
-            return None, err_msg('value is not numeric')
-    return None, err_msg()
+                return rangeops.get(operator), ''
+            return "{n} {o} {v}".format(n=field.name, o=operator, v=val), ''
+        except:
+            return '', err_msg('value is not numeric')
+    return '', err_msg()
 
 
 @log_error
@@ -128,6 +130,7 @@ def query_manager_config(path: str) -> dict:
                 , ['SalesAmount', 'float']
             ]
         )
+        , 'primary_key': cfg.get_or_set_variable('primary_key', 'ID')
         , 'filters': cfg.get_or_set_variable(
             'filters', [
                 ['OrderDate', '>=']
@@ -155,8 +158,8 @@ def query_manager_config(path: str) -> dict:
     }
 
 #   Validate configuration settings
-    for f in config.get('filters'):
-        if f[0] not in [fld[0] for fld in config.get('fields')]:
+    for f in config['filters']:
+        if f[0] not in [fld[0] for fld in config['fields']]:
             raise ValueError("""One or more filter names weren't
                 found in the field list.""")
     return config
@@ -257,7 +260,7 @@ class QueryManager(QtCore.QObject):
     def field_types(self) -> Dict[str, str]:
         """Dictionary of field names with their associated field type."""
         return {
-            val[0]: val[1]
+            val[0]: val[1]  # field name: field type
             for val in self.fields.values()
         }
 
@@ -326,6 +329,10 @@ class QueryManager(QtCore.QObject):
             , max_rows=self.max_display_rows
         )
 
+    @property
+    def primary_key(self):
+        return self.config.get('primary_key')
+
     def reset(self) -> None:
         self._criteria = {}
 
@@ -381,6 +388,16 @@ class QueryManager(QtCore.QObject):
         if criteria:
             return '(' + '; '.join(criteria) + ')'
         return 'top {} rows'.format(self.max_display_rows)
+
+    @log_error
+    def update(self, record_id: int, values: set) -> str:
+        """Persist a change to the data store.
+        """
+        sqlite_exec("""
+            UPDATE {table}
+            SET
+            WHERE {id_field} = {id_val}
+        """)
 
     @property
     def where_clause(self) -> str:
