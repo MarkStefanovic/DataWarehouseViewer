@@ -38,19 +38,18 @@ FieldStrategy = builds(
     Field
     , name=text(alphabet="abcdefg", min_size=1)
     , type=sampled_from(['int', 'str', 'date'])
-    , filterable=booleans()
 )
 
 
 @pytest.fixture(scope='module')
 def example_fields():
     return {
-        0: Field(name='first_name', type='str', filterable=True)
-        , 1: Field(name='last_name', type='str', filterable=False)
-        , 2: Field(name='order_date', type='date', filterable=True)
-        , 3: Field(name='payment_date', type='date', filterable=False)
-        , 4: Field(name='customer_id', type='int', filterable=True)
-        , 5: Field(name='order_id', type='int', filterable=False)
+        0: Field(name='first_name', type='str')
+        , 1: Field(name='last_name', type='str')
+        , 2: Field(name='order_date', type='date')
+        , 3: Field(name='payment_date', type='date')
+        , 4: Field(name='customer_id', type='int')
+        , 5: Field(name='order_id', type='int')
     }
 
 
@@ -59,6 +58,7 @@ def example_query_manager():
     config = {
         'db': 'test.db'
         , 'fields': []
+        , 'filters': []
         , 'table': 'Customers'
         , 'max_export_rows': 500000
         , 'max_display_rows': 1000
@@ -78,16 +78,13 @@ def random_operator(field: Field) -> str:
 @given(field=FieldStrategy, value=text(min_size=1))
 def test_add_criteria(field, value):
     random_op = random_operator(field)
-    print('random op: {}'.format(random_op))
     qm = example_query_manager()
     qm.add_criteria(
         field=field
         , value=value
         , operator=random_op
     )
-    assume(field.filterable)
     sql = qm.sql_display
-    print(sql)
     note('sql: {}'.format(sql))
     valid_sql(qm.sql_display)
 
@@ -97,18 +94,27 @@ def test_operator_options(field):
     op = operator_options(field)
     assert isinstance(op.options, list)
     assert isinstance(op.default, str)
-    if field.filterable:
-        assert op.default
-    else:
-        assert op.default == ''
+    assert op.default
+
+
+def test_table_with_tablename_provided():
+    qm = QueryManager(config={'table': 'test'})
+    assert qm.table == 'test'
+
+
+def test_table_with_query_provided(tmpdir):
+    sql = tmpdir.mkdir('test_config').join('test.sql')
+    sql.write("SELECT * FROM test")
+    qm = QueryManager(config={'table': str(sql)})
+    assert qm.table == "(SELECT * FROM test)"
 
 
 @given(FieldStrategy, text())
 def test_valid_where_condition(field, s):
     opt = random_operator(field)
     where = where_condition(field=field, value=s, operator=opt)[0]
-    sql = "SELECT {n} FROM tbl WHERE {w}".format(n=field.name, w=where)
     assume(where)
+    sql = "SELECT {n} FROM tbl WHERE {w}".format(n=field.name, w=where)
     note('operator:{}'.format(opt))
     note('where condition: {}'.format(where))
     note('sql:{}'.format(sql))
@@ -165,6 +171,7 @@ class QueryManagerMachine(RuleBasedStateMachine):
         self.config = {
             'db': 'test.db'
             , 'fields': []
+            , 'filters': []
             , 'table': 'Customers'
             , 'max_export_rows': 500000
             , 'max_display_rows': 1000
@@ -172,14 +179,11 @@ class QueryManagerMachine(RuleBasedStateMachine):
         }
         self.query_manager = QueryManager(self.config)
 
-
     @rule(target=fields, field=FieldStrategy)
     def add_field(self, field):
-        assume(field.name not in self.query_manager.headers) # unique constraint
+        assume(field.name not in self.query_manager.headers)  # must be unique
         assume(valid_sql_field_name(field.name))
-        self.config.get('fields').append([
-             field.name, field.type, field.filterable
-        ])
+        self.config.get('fields').append([field.name, field.type])
 
     @rule(field=fields, value=text())
     def add_criteria(self, field, value):
