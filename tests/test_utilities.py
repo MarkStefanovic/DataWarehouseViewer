@@ -3,7 +3,13 @@ import sqlite3
 
 import pytest
 
-from utilities import inspect_table, is_float, SqliteField, valid_sql_field_name
+from utilities import (
+    cache,
+    inspect_table,
+    is_float,
+    SqliteField,
+    valid_sql_field_name
+)
 
 
 def setup_module(module):
@@ -14,6 +20,16 @@ def setup_module(module):
 
 def teardown_module(module):
     os.remove('test.db')
+
+
+def test_cache():
+    @cache
+    def test_func(a, b):
+        return a + b
+    test_func(3, 4) == 7
+    test_func(3, 4) == 7
+    test_func(b=4, a=3) == 7
+
 
 
 def test_inspect_table():
