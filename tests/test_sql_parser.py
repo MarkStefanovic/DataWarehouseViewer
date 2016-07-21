@@ -1,11 +1,11 @@
 import pytest
 
-from sql_parser import parse_sql
+from sql_parser import SqlParse, parse_sql
 
 
 @pytest.fixture(scope='module')
-def complex_parse():
-    sql = """
+def complex_sql():
+    return """
         WITH Chease AS(
                 SELECT
                     ID
@@ -32,45 +32,73 @@ def complex_parse():
         )
         SELECT first_name FROM Cheese
     """
-    return parse_sql(sql)
 
 
 @pytest.fixture(scope='module')
-def simple_parse():
-    sql = """
+def simple_sql():
+    return """
         SELECT Name, Price
         FROM fruits
         WHERE seedless = True
     """
-    return parse_sql(sql)
 
 
-def test_parse_sql_selected_items_complex(complex_parse):
-    assert complex_parse['selected_items'] == (
-        (0, 'id, first_name as firstname, lastname, middle_initial as '
-            'middleinitial, city, sum(income) as income'),
-        (1, 'first_name')
-    )
+@pytest.fixture(scope='module')
+def complex_parse(complex_sql):
+    return parse_sql(complex_sql)
 
 
-def test_parse_sql_selected_items_simple(simple_parse):
-    assert simple_parse['selected_items'] == (0, 'name, price')
+@pytest.fixture(scope='module')
+def simple_parse(simple_sql):
+    return parse_sql(simple_sql)
 
 
-def test_parse_sql_main_table_complex(complex_parse):
-    assert complex_parse['main_table'] == (
-        (0, 'dbo.mytable as t1'),
-        (1, 'cheese')
-    )
+@pytest.fixture(scope='module')
+def complex_sqlparse_obj(complex_sql):
+    return SqlParse(complex_sql)
 
 
-def test_parse_sql_main_table_simple(simple_parse):
-    assert simple_parse['main_table'] == (0, 'fruits')
+@pytest.fixture(scope='module')
+def simple_sqlparse_obj(simple_sql):
+    return SqlParse(simple_sql)
 
-    # print('results dict:', parsed)
-    # print('selected items:', parsed.get('selected_items')
+
+def test_parse_sql_cte(complex_parse, simple_parse):
+    assert complex_parse.get('cte') == {0: 'chease'}
+    assert not simple_parse.get('cte')
+
+
+def test_parse_sql_selected_items(complex_parse, simple_parse):
+    assert complex_parse['selected_items'] == {
+        0: 'id, first_name as firstname, lastname, middle_initial as '
+            'middleinitial, city, sum(income) as income',
+        1: 'first_name'
+    }
+    assert simple_parse['selected_items'] == {0: 'name, price'}
+
+
+def test_parse_sql_main_table(complex_parse, simple_parse):
+    assert complex_parse['main_table'] == {
+        0: 'dbo.mytable as t1',
+        1: 'cheese'
+    }
+    assert simple_parse['main_table'] == {0: 'fruits'}
+
+
+def test_sql_parse_get_elements(complex_sqlparse_obj, simple_sqlparse_obj):
+    assert complex_sqlparse_obj.get_subquery_elements(0).get('main_table') == 'dbo.mytable as t1'
+    assert complex_sqlparse_obj.get_subquery_elements(1).get('main_table') == 'cheese'
+    assert simple_sqlparse_obj.get_subquery_elements(0).get('main_table') == 'fruits'
+    assert simple_sqlparse_obj.get_subquery_elements(1).get('main_table') == None
+
+
+def test_sql_parse_subquery_count(complex_sqlparse_obj, simple_sqlparse_obj):
+    assert complex_sqlparse_obj.subquery_count == 2
+    assert simple_sqlparse_obj.subquery_count == 1
+
+
 if __name__ == '__main__':
-    print('complex parse:', complex_parse())
-    print('simple parse:', simple_parse())
+    print('complex parse:', complex_parse(complex_sql()))
+    print('simple parse:', simple_parse(simple_sql()))
     pytest.main(__file__)
 
