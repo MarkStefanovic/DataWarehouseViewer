@@ -1,7 +1,7 @@
 """This module contains tools to break a sql statement down into its constituent parts"""
 from collections import defaultdict
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pyparsing import (
     alphas
@@ -66,7 +66,6 @@ def capitalize_keywords(str):
 def parse_sql(sql: str) -> Dict[str, Any]:
     clean_sql = clean(sql)
 
-    # basic operators
     comparison_operator = Combine(
         Optional(White())
         + MatchFirst([
@@ -101,6 +100,16 @@ def parse_sql(sql: str) -> Dict[str, Any]:
     full_name_with_alias = Combine(
         full_name
         + Optional(alias)
+    )
+
+    cte_declaration = Combine(
+        Suppress(Literal("with "))
+        + full_name
+        + Suppress(
+            Literal(" as")
+            + Optional(White())
+            + Literal("(")
+        )
     )
 
     p_aggregate = Combine(
@@ -149,9 +158,15 @@ def parse_sql(sql: str) -> Dict[str, Any]:
 
     and_seperated_assignment = ZeroOrMore(
         full_name + comparison_operator + full_name
-        + ZeroOrMore(" and " + full_name + comparison_operator + full_name)
+        + ZeroOrMore(
+            " and "
+            + full_name
+            + comparison_operator
+            + full_name
+        )
     )
-    # end basic operators
+
+    cte_parser = cte_declaration.setResultsName('cte')
 
     selected_items_parser = Combine(
         Suppress("select ")  # anchor
@@ -171,29 +186,45 @@ def parse_sql(sql: str) -> Dict[str, Any]:
     ).setResultsName('join_conditions')
 
     where_condition_parser = Combine(
-        Suppress("where ")  # anchor
+        Suppress("where ")
         + assignment
         + ZeroOrMore(" and " + assignment)
     ).setResultsName('where_conditions')
 
     parsers = {
-        'selected_items':     selected_items_parser
-        , 'main_table':       main_table_parser
-        , 'join_conditions':  join_condition_parser
-        , 'where_conditions': where_condition_parser
+        'cte':                  cte_parser
+        , 'selected_items':     selected_items_parser
+        , 'main_table':         main_table_parser
+        , 'join_conditions':    join_condition_parser
+        , 'where_conditions':   where_condition_parser
     }
 
-    results_dict = defaultdict(str)
+    results = defaultdict(dict)
     for key, val in parsers.items():
         parsed_val = [
             match[0]
             for match, start, stop
             in val.scanString(clean_sql)
         ]
-        for i, val in enumerate(parsed_val):
-            if results_dict.get(key):
-                results_dict[key] = results_dict.get(key), (i, val)
-            else:
-                results_dict[key] = (i, val)
-    return results_dict
+        for i, v in enumerate(parsed_val):
+            results[key][i] = v
+    return results
 
+
+class SqlParse:
+    def __init__(self, sql: str) -> None:
+        self.elements = parse_sql(sql)
+
+    def get_subquery_elements(self, ix: int) -> Dict[str, Any]:
+        subquery = defaultdict(str)
+        for key, val in self.elements.items():
+            subquery[key] = val.get(ix)
+        return subquery
+
+    @property
+    def subquery_count(self):
+        return max(
+            max(x for x in key.keys())
+            for key
+            in (k for k in self.elements.values())
+        ) + 1
