@@ -19,6 +19,7 @@ Traceback (most recent call last):
 ...
 KeyError: 'test2'
 """
+from collections import OrderedDict
 import json
 import os
 from typing import Dict, TypeVar, Union
@@ -91,7 +92,6 @@ class SimpleJsonConfig(QtCore.QObject):
 
 
 if __name__ == "__main__":
-    cfg.get_variable('test2')
     import doctest
     doctest.testmod()
 
