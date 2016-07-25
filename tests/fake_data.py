@@ -9,7 +9,7 @@ from utilities import rootdir, SQLiteConnection
 fake = Faker()
 
 
-def create_table():
+def create_sales_history_table():
     with SQLiteConnection(db_path) as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS SalesHistory (
@@ -33,11 +33,6 @@ def delete_db():
         print(str(e))
 
 
-def drop_table():
-    with SQLiteConnection(db_path) as con:
-        con.execute("DROP TABLE IF EXISTS Customers;")
-
-
 def insert_test_rows():
     with SQLiteConnection(db_path) as con:
         for _ in range(10000):
@@ -50,8 +45,7 @@ def insert_test_rows():
                   , ShippingDate
                   , ShippingAddress
                   , SalesAmount
-                )
-                VALUES (
+                ) VALUES (
                   '{customer_id}'
                   , '{product_id}'
                   , '{customer_name}'
@@ -62,13 +56,44 @@ def insert_test_rows():
                 )
             """).format(
                 customer_id=random.randint(1, 999999)
-                , product_id=random.randint(1, 999999)
+                , product_id=random.randint(1, 10)
                 , customer_name=fake.name()
                 , order_date=fake.date_time()
                 , shipping_date=fake.date_time()
                 , shipping_address=fake.address()
                 , sales_amount=round(random.random() * 1000, 2)
             ))
+
+
+def create_products_table():
+    with SQLiteConnection(db_path) as con:
+        con.execute("""
+            DROP TABLE IF EXISTS Products
+        """)
+        con.execute("""
+            CREATE TABLE Products (
+                ID INTEGER PRIMARY KEY
+                , ProductName VARCHAR(100)
+                , ProductCategory VARCHAR(40)
+            )
+        """)
+        con.execute("""
+            INSERT INTO Products (
+              ProductName
+              , ProductCategory
+            )
+            VALUES
+                ('Rain coat', 'Clothing')
+                , ('Banannas', 'Groceries')
+                , ('Shoes', 'Clothing')
+                , ('Sony Walkman', 'Electronics')
+                , ('Hair clips', 'Household items')
+                , ('Toothpaste', 'Toiletries')
+                , ('Bandaids', 'Medicine')
+                , ('Oranges', 'Groceries')
+                , ('Paper', 'Office supplies')
+                , ('Levi Jeans', 'Clothing')
+        """)
 
 
 def setup():
@@ -81,7 +106,8 @@ def teardown():
 
 def reset_db():
     delete_db()
-    create_table()
+    create_sales_history_table()
+    create_products_table()
     insert_test_rows()
 
 
