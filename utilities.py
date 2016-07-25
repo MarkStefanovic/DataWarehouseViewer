@@ -104,34 +104,101 @@ def files_in_folder(folder: str, prefix: str=None) -> list:
     return sorted([os.path.abspath(fp) for fp in os.listdir(folder)])
 
 
+class immutable_property:
+    """A method decorator to lazily evaluate a property value.
+
+    This decorator should only be used to represent immutable data, as
+    it replaces the property itself with its value for efficiency in
+    future calls.  It's usually 4-7X faster to access the property, which
+    is useful if the property is called millions of times.
+
+    Example:
+    >>> class Test:
+    ...     def __init__(self, val):
+    ...         self.val = val
+    ...
+    ...     def calc_return_value(self):
+    ...         print('generating', self.val)
+    ...
+    ...     @immutable_property
+    ...     def a(self):
+    ...         self.calc_return_value()
+    ...         return self.val
+
+    >>> a_test = Test(2)
+    >>> print('a_test.a:', a_test.a)
+    generating 2
+    a_test.a: 2
+    >>> b_test = Test(3)
+    >>> print('b_test:', b_test.a)
+    generating 3
+    b_test: 3
+    >>> print('a_test.a:', a_test.a)
+    a_test.a: 2
+    >>> print('b_test:', b_test.a)
+    b_test: 3
+    """
+
+    def __init__(self, prop):
+        self.prop = prop
+        self.prop_name = prop.__name__
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return None
+        value = self.prop(obj)
+        setattr(obj, self.prop_name, value)
+        return value
+
+
 def rootdir() -> str:
     if getattr(sys, 'frozen', False):
         return os.path.abspath(os.path.dirname(sys.executable))
     else:
-        # return os.path.abspath(__file__)
         return os.path.abspath(os.path.dirname(__file__))
 
 
 class SQLiteConnection:
     """Context manager that auto-commits and closes connection on exit."""
 
-    def __init__(self, db_name):
+    def __init__(self, db_name, read_only=False):
         """Constructor"""
         self.db_name = db_name
+        self.read_only = read_only
 
     def __enter__(self):
         """
         Open the database connection
         """
-        self.conn = sqlite3.connect(self.db_name)
+        fp = os.path.abspath(self.db_name)
+        if self.read_only:
+            self.conn = sqlite3.connect('file:/{}?mode=ro'.format(fp), uri=True)
+        else:
+            self.conn = sqlite3.connect(fp)
         return self.conn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """
         Close the connection
         """
-        self.conn.commit()
+        if not self.read_only:
+            self.conn.commit()
         self.conn.close()
+
+
+def sqlite_pull(db_name, sql) -> List:
+    with SQLiteConnection(db_name=db_name, read_only=True) as con:
+        cursor = con.cursor()
+        cursor.execute(sql)
+        return cursor.fetchall()
+
+
+def sqlite_delete_row(db_name, table, id_fieldname, id_value) -> None:
+    with SQLiteConnection(db_name=db_name, read_only=False) as con:
+        con.execute(
+            "DELETE FROM {t} WHERE {n} = {v}"
+            .format(t=table, n=id_fieldname, v=id_value)
+        )
 
 
 def valid_sql_field_name(field_name: str) -> bool:
