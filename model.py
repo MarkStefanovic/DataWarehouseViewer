@@ -1,14 +1,16 @@
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import operator
 import re
 import threading
-
+from typing import Any, Dict
+import uuid
 from PyQt4 import QtCore
 
 from logger import log_error
 from query_manager import QueryManager
-from utilities import is_float
+from utilities import immutable_property, is_float
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
@@ -23,8 +25,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self._query_manager = QueryManager(config)
         self._original_data = []
         self._modified_data = []
-        self._header = self._query_manager.headers
-        self._max_rows = self._query_manager.max_display_rows
+
+        # variables needed for pagination
+        self.rows_per_page = 50
+        self.rows_loaded = 50
 
     #   Connect Signals
         self.exit_signal.connect(self._query_manager.exit_signal.emit)
@@ -32,10 +36,61 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self._query_manager.query_results_signal.connect(self.update_view)
         self._query_manager.rows_exported_signal.connect(self.rows_exported_signal.emit)
         self._query_manager.rows_returned_signal.connect(self.rows_returned_signal.emit)
-        # self.filters_changed_signal.connect(self.calculate_totals)
+
+    def canFetchMore(self, index=QtCore.QModelIndex()):
+        if len(self._modified_data) > self.rows_loaded:
+            return True
+        return False
+
+    @property
+    def changes(self) -> Dict[str, set]:
+        pk = self._query_manager.primary_key_index
+        original = set(map(tuple, self._original_data))
+        modified = set(map(tuple, self._modified_data))
+        changed_ids = set(row[pk] for row in original ^ modified)
+        updated = set(
+            row
+            for row in modified
+            if row[pk] in changed_ids
+            and row[pk] in {
+                row[pk]
+                for row
+                in original
+            }
+        )
+        added = (modified - original) - updated
+        deleted = set(
+            row
+            for row in (original - modified)
+            if row[pk] not in {
+                row[pk]
+                for row
+                in updated
+            }
+        )
+        return {
+            'added': added
+            , 'deleted': deleted
+            , 'updated': updated
+        }
+
+    @property
+    def editable(self):
+        return self._query_manager.editable
 
     def export(self):
         self._query_manager.export()
+
+    def fetchMore(self, index=QtCore.QModelIndex()):
+        remainder = len(self._modified_data) - self.rows_loaded
+        rows_to_fetch = min(remainder, self.rows_per_page)
+        self.beginInsertRows(
+            QtCore.QModelIndex()
+            , self.rows_loaded
+            , self.rows_loaded + rows_to_fetch - 1
+        )
+        self.rows_loaded += rows_to_fetch
+        self.endInsertRows()
 
     def field_totals(self, col_ix: int) -> list:
         totals = []
@@ -55,8 +110,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 , len(set(val[col_ix] for val in self._modified_data))))
         return totals
 
-    def rowCount(self, parent=None):
-        return len(self._modified_data) if self._modified_data else 0
+    @immutable_property
+    def foreign_keys(self):
+        return self._query_manager.foreign_keys
 
     def columnCount(self, parent=None):
         return len(self._modified_data[0]) if self._modified_data else 0
@@ -106,10 +162,13 @@ class AbstractModel(QtCore.QAbstractTableModel):
         except Exception as e:
             err_msg = 'Error modeling data: {}'.format(e)
             self.error_signal.emit(err_msg)
-            # self.error_signal.emit(err_msg)
 
     def distinct_values(self, col_ix):
-        return sorted(set(val[col_ix] for val in self._modified_data))
+        return sorted(set(str(val[col_ix]) for val in self._modified_data))
+
+    @property
+    def editable_fields(self):
+        return self._query_manager.editable_fields
 
     def filter_equality(self, col_ix, val):
         self._modified_data = [x for x in self._modified_data if x[col_ix] == val]
@@ -147,8 +206,24 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
 
     def filter_set(self, col_ix, values):
-        self._modified_data = [x for x in self._original_data if str(x[col_ix]) in [y for y in values]]
+        self._modified_data = [
+            x for x in self._original_data
+            if str(x[col_ix]) in [y for y in values]
+        ]
         self.filters_changed_signal.emit()
+
+    def flags(self, ix: QtCore.QModelIndex) -> int:
+        if ix.column() in self._query_manager.editable_fields:
+            return (
+                QtCore.Qt.ItemIsEditable
+                | QtCore.Qt.ItemIsEnabled
+                | QtCore.Qt.ItemIsSelectable
+            )
+        return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
+
+    # @immutable_property
+    # def foreign_keys(self):
+    #     return self._query_manager.foreign_keys
 
     def full_reset(self):
         self.layoutAboutToBeChanged.emit()
@@ -159,19 +234,49 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def headerData(self, col, orientation, role):
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
-            return self._header[col]
+            return self.header[col]
         return None
 
     @property
     def header(self):
-        return self._header
+        return self._query_manager.headers
+
+    def insertRow(self, row: int, ix: QtCore.QModelIndex) -> bool:
+        dummies = {
+            'int': 0
+            , 'float': 0.0
+            , 'str': ''
+            , 'date': '1900-01-01'
+        }
+        dummy_row = []  # type: list
+        for _, field in sorted(self._query_manager.fields.items()):
+            dummy_row.append(dummies.get(field.type))
+        #replace id column with a random uuid
+        dummy_row[0] = uuid.uuid4().int
+
+        self._modified_data.insert(
+            ix.row()
+            , dummy_row
+        )
+        self.dataChanged.emit(ix, ix)
+        return True
 
     def pull(self):
+        self.rows_loaded = self.rows_per_page
         self._query_manager.pull()
+
+    @property
+    def primary_key_index(self):
+        return self._query_manager.primary_key_index
 
     @QtCore.pyqtSlot(str)
     def query_errored(self, msg):
         self.error_signal.emit(msg)
+
+    def removeRow(self, row: int, ix: QtCore.QModelIndex) -> bool:
+        del self._modified_data[ix.row()]
+        self.dataChanged.emit(ix, ix)
+        return True
 
     def reset(self):
         self.layoutAboutToBeChanged.emit()
@@ -179,7 +284,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
         self.layoutChanged.emit()
 
-    def row(self, row, parent=None):
+    def row(self, row):
         """
         This method returns a list of values given a row number.
         It is required by the custom sort filter proxy model used by the table.
@@ -189,6 +294,34 @@ class AbstractModel(QtCore.QAbstractTableModel):
         for i in range(record.count()):
             values.append(record.value(i))
         return values
+
+    def rowCount(self, index=QtCore.QModelIndex()):
+        if self._modified_data:
+            if len(self._modified_data) <= self.rows_loaded:
+                return len(self._modified_data)
+            return self.rows_loaded
+        else:
+            return 0
+
+    def save(self) -> Dict[str, int]:
+        chg = self.changes
+        if chg['added'] or chg['deleted'] or chg['updated']:
+            results = self._query_manager.save_changes(chg)
+            if results['rows_errored']:
+                self.error_signal.emit("Error saving changes")
+            else:
+                self._original_data = deepcopy(self._modified_data)
+            return results
+        else:
+            return {}
+        # TODO:
+        # any records that we are unable to save due to validation errors
+        # filter on them so they can be fixed
+
+    def setData(self, ix: QtCore.QModelIndex, value: Any, role: int=QtCore.Qt.EditRole) -> bool:
+        self._modified_data[ix.row()][ix.column()] = value
+        self.dataChanged.emit(ix, ix)
+        return True
 
     def sort(self, col, order):
         """sort table by given column number col"""
@@ -203,21 +336,21 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.layoutChanged.emit()
         except Exception as e:
             err_msg = "Error sorting data: {}".format(e)
-            self.error_signal(err_msg)
+            self.error_signal.emit(err_msg)
+
+    def undo(self) -> None:
+        self.layoutAboutToBeChanged.emit()
+        self._modified_data = deepcopy(self._original_data)
+        self.layoutChanged.emit()
 
     @QtCore.pyqtSlot(list)
     def update_view(self, results):
-        try:
-            self.layoutAboutToBeChanged.emit()
-            self._original_data = results
-            self._modified_data = results
-            self.filters_changed_signal.emit()
-            self.layoutChanged.emit()
-        except Exception as e:
-            err_msg = "Error updating view: {}".format(e)
-            self.error_signal.emit(err_msg)
+        self.layoutAboutToBeChanged.emit()
+        self._original_data = results
+        self._modified_data = deepcopy(results)
+        self.filters_changed_signal.emit()
+        self.layoutChanged.emit()
 
-if __name__ == '__main__':
-    import os
-    m = AbstractModel(os.path.join('config', 'customer_config.json'))
-    m.export()
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
