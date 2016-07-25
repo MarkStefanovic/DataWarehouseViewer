@@ -23,7 +23,7 @@ class ComboboxDelegate(QtGui.QStyledItemDelegate):
     def setEditorData(self, editor, index):
         """Set the ComboBox's current index."""
         value = index.data(QtCore.Qt.DisplayRole)
-        i = editor.findText(value)
+        i = editor.findText(str(value))
         if i == -1:
             i = 0
         editor.setCurrentIndex(i)
