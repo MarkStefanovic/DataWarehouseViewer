@@ -57,5 +57,6 @@ def test_valid_sql_field_name():
     assert valid_sql_field_name("'") == False
     assert valid_sql_field_name("_") == False
 
+
 if __name__ == '__main__':
     pytest.main(__file__)
