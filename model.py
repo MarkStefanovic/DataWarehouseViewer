@@ -6,7 +6,9 @@ import re
 import threading
 from typing import Any, Dict
 import uuid
+
 from PyQt4 import QtCore
+from sortedcontainers import SortedSet
 
 from logger import log_error
 from query_manager import QueryManager
@@ -45,10 +47,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
     @property
     def changes(self) -> Dict[str, set]:
         pk = self._query_manager.primary_key_index
-        original = set(map(tuple, self._original_data))
-        modified = set(map(tuple, self._modified_data))
-        changed_ids = set(row[pk] for row in original ^ modified)
-        updated = set(
+        original = SortedSet(map(tuple, self._original_data))
+        modified = SortedSet(map(tuple, self._modified_data))
+        changed_ids = SortedSet(row[pk] for row in original ^ modified)
+        updated = SortedSet(
             row
             for row in modified
             if row[pk] in changed_ids
@@ -59,7 +61,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             }
         )
         added = (modified - original) - updated
-        deleted = set(
+        deleted = SortedSet(
             row
             for row in (original - modified)
             if row[pk] not in {
@@ -74,7 +76,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             , 'updated': updated
         }
 
-    @property
+    @immutable_property
     def editable(self):
         return self._query_manager.editable
 
@@ -164,9 +166,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.error_signal.emit(err_msg)
 
     def distinct_values(self, col_ix):
-        return sorted(set(str(val[col_ix]) for val in self._modified_data))
+        return SortedSet(str(val[col_ix]) for val in self._modified_data)
 
-    @property
+    @immutable_property
     def editable_fields(self):
         return self._query_manager.editable_fields
 
@@ -237,7 +239,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             return self.header[col]
         return None
 
-    @property
+    @immutable_property
     def header(self):
         return self._query_manager.headers
 
@@ -265,7 +267,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.rows_loaded = self.rows_per_page
         self._query_manager.pull()
 
-    @property
+    @immutable_property
     def primary_key_index(self):
         return self._query_manager.primary_key_index
 
@@ -283,17 +285,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self._modified_data = self._original_data
         self.filters_changed_signal.emit()
         self.layoutChanged.emit()
-
-    def row(self, row):
-        """
-        This method returns a list of values given a row number.
-        It is required by the custom sort filter proxy model used by the table.
-        """
-        values = []
-        record = self.record(row)
-        for i in range(record.count()):
-            values.append(record.value(i))
-        return values
 
     def rowCount(self, index=QtCore.QModelIndex()):
         if self._modified_data:
