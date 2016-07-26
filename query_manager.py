@@ -7,10 +7,10 @@ import re
 import string
 from typing import Any, Dict, List, Set, Tuple, Union
 
-from json_config import SimpleJsonConfig
 from PyQt4 import QtCore
+from sortedcontainers import SortedDict
 
-from json_config import JsonType
+from json_config import JsonType, SimpleJsonConfig
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
@@ -221,7 +221,7 @@ class QueryManager(QtCore.QObject):
         self._exporter = QueryExporter()
         self._runner = QueryRunner()
         self._primary_table_fields = []  # saved here to minimize IO
-        self._foreign_keys = {} # saved here to minimize IO
+        self._foreign_keys = SortedDict() # saved here to minimize IO
         # self._main_table_fields = []
 
     #   Configuration settings that users are able to change at runtime
@@ -284,7 +284,7 @@ class QueryManager(QtCore.QObject):
     def criteria(self) -> Dict[str, str]:
         return self._criteria or {}
 
-    @property
+    @immutable_property
     def db(self) -> str:
         return self.config['db']
 
@@ -295,11 +295,11 @@ class QueryManager(QtCore.QObject):
                     .format(t=self.table, n=self.primary_key, v=id)
             )
 
-    @property
+    @immutable_property
     def editable(self) -> bool:
         return 'add' in self.config['allowed_operations']
 
-    @property
+    @immutable_property
     def editable_fields(self) -> List[int]:
         return [
             self.get_field_index(fld)
@@ -325,7 +325,7 @@ class QueryManager(QtCore.QObject):
             in enumerate(self.config.get('fields'))
         })
 
-    @property
+    @immutable_property
     def field_types(self) -> Dict[str, str]:
         """Dictionary of field names with their associated field type."""
         return {
@@ -333,7 +333,7 @@ class QueryManager(QtCore.QObject):
             for val in self.fields.values()
         }
 
-    @property
+    @immutable_property
     def filters(self) -> List[Filter]:
         if self._filters:
             return sorted(self._filters)
@@ -346,7 +346,7 @@ class QueryManager(QtCore.QObject):
             for f in self.config.get('filters')
         )
 
-    @property
+    @immutable_property
     def foreign_keys(self) -> Dict[int, Dict[int, str]]:
         if self._foreign_keys:
             return self._foreign_keys
@@ -366,7 +366,7 @@ class QueryManager(QtCore.QObject):
             }
         return self._foreign_keys
 
-    @property
+    @immutable_property
     def headers(self) -> List[str]:
         """Return a list of field headers for display."""
         if self.fields:
@@ -381,33 +381,33 @@ class QueryManager(QtCore.QObject):
         # return self._main_table_fields
         return inspect_table(db=self.db, table=self.table)
 
-    @property
+    @immutable_property
     def max_display_rows(self) -> int:
         return self.config.get('max_display_rows', 0)
 
-    @property
+    @immutable_property
     def max_display_rows_clause(self) -> str:
         if self.max_display_rows > 0:
             return "LIMIT {}".format(self.max_display_rows)
         return ""
 
-    @property
+    @immutable_property
     def max_export_rows(self) -> int:
         return self.config.get('max_export_rows', 0)
 
-    @property
+    @immutable_property
     def max_export_rows_clause(self) -> str:
         if self.max_export_rows > 0:
             return "LIMIT {}".format(self.max_export_rows)
         return ""
 
-    @property
+    @immutable_property
     def order_by(self) -> str:
         if self.config['order_by']:
             return '{} {}'.format(self.config.get('order_by'), 'asc')
         return ''
 
-    @property
+    @immutable_property
     def order_by_clause(self) -> str:
         if self.order_by:
             return 'ORDER BY {}'.format(self.config.get('order_by'))
@@ -423,19 +423,19 @@ class QueryManager(QtCore.QObject):
             , max_rows=self.max_display_rows
         )
 
-    @property
+    @immutable_property
     def primary_key(self):
         return self.config['primary_key']
 
-    @property
+    @immutable_property
     def primary_key_index(self):
         return self.get_field_index(self.primary_key)
 
-    @property
+    @immutable_property
     def primary_table(self):
         return self.config['primary_table']
 
-    @property
+    @immutable_property
     def primary_table_fields(self):
         if self._primary_table_fields:
             return self._primary_table_fields
@@ -511,9 +511,7 @@ class QueryManager(QtCore.QObject):
             self.error_signal.emit("Error saving changes: {}".format(e))
             return {}
 
-
-
-    @property
+    @immutable_property
     def table(self) -> str:
         """Returns table name or a sql statement depending on config
 
