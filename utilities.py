@@ -151,6 +151,36 @@ class immutable_property:
         return value
 
 
+class DictToClassRepr:
+    """Return a nested class representation of a dictionary.
+
+    Examples:
+        >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
+        >>> o = ObjRepr(d)
+        >>> o.c.e
+        5
+
+        >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
+        >>> o = ObjRepr(d)
+        >>> o.b
+        [1, 2, 3]
+    """
+    def __init__(self, dictionary):
+        for key, val in dictionary.items():
+            if isinstance(val, (list, tuple)):
+                setattr(
+                    self
+                    , key
+                    , [ObjRepr(x) if isinstance(x, dict) else x for x in val]
+                )
+            else:
+                setattr(
+                    self
+                    , key
+                    , ObjRepr(val) if isinstance(val, dict) else val
+                )
+
+
 def rootdir() -> str:
     if getattr(sys, 'frozen', False):
         return os.path.abspath(os.path.dirname(sys.executable))

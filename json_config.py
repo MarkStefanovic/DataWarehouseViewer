@@ -18,11 +18,16 @@ Examples:
 Traceback (most recent call last):
 ...
 KeyError: 'test2'
+
+>>> cls = cfg.class_representation
+>>> cls.hello
+1
 """
 from collections import OrderedDict
 import json
 import os
 from typing import Dict, TypeVar, Union
+from utilities import DictToClassRepr
 
 from PyQt4 import QtCore
 
@@ -42,6 +47,11 @@ class SimpleJsonConfig(QtCore.QObject):
     @property
     def all_variables(self) -> dict:
         return self._cache
+
+    @property
+    def class_representation(self):
+        """Return settings as a class for ease of use"""
+        return DictToClassRepr(self.all_variables)
 
     def set_variable(self, key: str, val: JsonType) -> None:
         """Set the value of the configuration variable for the key specified and save it to disk.
