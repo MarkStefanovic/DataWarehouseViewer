@@ -57,24 +57,14 @@ class AbstractModel(QtCore.QAbstractTableModel):
         modified = set(map(tuple, self.modified_data))
         changed_ids = set(row[pk] for row in original ^ modified)
         updated = set(
-            row
-            for row in modified
+            row for row in modified
             if row[pk] in changed_ids
-            and row[pk] in {
-                row[pk]
-                for row
-                in original
-            }
+            and row[pk] in {row[pk] for row in original}
         )
         added = (modified - original) - updated
         deleted = set(
-            row
-            for row in (original - modified)
-            if row[pk] not in {
-                row[pk]
-                for row
-                in updated
-            }
+            row for row in (original - modified)
+            if row[pk] not in {row[pk] for row in updated}
         )
         return {
             'added': added
@@ -292,8 +282,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             if len(self.visible_data) <= self.rows_loaded:
                 return len(self.visible_data)
             return self.rows_loaded
-        else:
-            return 0
+        return 0
 
     def save(self) -> Dict[str, int]:
         chg = self.changes
