@@ -1,11 +1,17 @@
+"""The functions used in the module are used by multiple modules in the project"""
+
 from functools import wraps
 import os
 import re
+from reprlib import recursive_repr
 import sys
 import time
 import sqlite3
-from typing import Any, Dict, Generator, Iterable, List, NamedTuple, Sequence
 
+from typing import Any, Generator, NamedTuple, Sequence
+
+from sqlalchemy import create_engine
+from sqlalchemy.sql import Delete, Insert, Update
 
 SqliteField = NamedTuple('SqliteField', [
     ('ix', int)
@@ -15,6 +21,40 @@ SqliteField = NamedTuple('SqliteField', [
     , ('default_value', Any)
     , ('primary_key', bool)
 ])
+
+
+def autorepr(cls):
+    """Class decorator that automatically adds __repr__ and __str__ methods.
+
+    Example:
+        >>> @autorepr
+        ... class Test:
+        ...     def __init__(self, a, b):
+        ...         self.a = a
+        ...         self.b = b
+
+        >>> t = Test('hello', 'world')
+        >>> t.b = t
+        >>> print(t)
+        Test
+            a = hello
+            b = ...
+    """
+    @recursive_repr()
+    def __repr__(self):
+        attrs = ", ".join(
+            "{}={}".format(k, v) for k, v in self.__dict__.items())
+        return "{}({})".format(self.__class__.__name__, attrs)
+
+    @recursive_repr()
+    def __str__(self):
+        attrs = "\n".join(
+            "    {} = {}".format(k, v) for k, v in self.__dict__.items())
+        return "{}\n{}".format(self.__class__.__name__, attrs)
+
+    cls.__repr__ = __repr__
+    cls.__str__ = __str__
+    return cls
 
 
 def cache(func):
@@ -59,43 +99,6 @@ def delete_old_outputs(path: str):
 
 def timestr() -> str:
     return time.strftime("%H:%M:%S")
-
-
-def inspect_table(db: str, table: str) -> List[SqliteField]:
-    with SQLiteConnection(db) as con:
-        cursor = con.cursor()
-        cursor.execute("PRAGMA table_info('{}')".format(table))
-        return [
-            SqliteField(
-                ix=row[0]
-                , name=row[1]
-                , data_type=row[2]
-                , nullable= True if row[3] == 1 else False
-                , default_value=row[4]
-                , primary_key=True if row[5] == 1 else False
-            )
-            for row in cursor.fetchall()
-        ]
-
-
-def is_float(val) -> bool:
-    """Can value be converted to a float?"""
-    try:
-        float(val)
-        return True
-    except ValueError:
-        return False
-
-
-def iterrows(cursor: sqlite3.Cursor, chunksize: int=1000) -> Generator:
-    rows = 0  # type: int
-    while True:
-        results = cursor.fetchmany(chunksize)  # type: Iterable
-        rows += chunksize
-        if not results:
-            break
-        for result in results:
-            yield result
 
 
 def files_in_folder(folder: str, prefix: str=None) -> list:
@@ -156,12 +159,12 @@ class DictToClassRepr:
 
     Examples:
         >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
-        >>> o = ObjRepr(d)
+        >>> o = DictToClassRepr(d)
         >>> o.c.e
         5
 
         >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
-        >>> o = ObjRepr(d)
+        >>> o = DictToClassRepr(d)
         >>> o.b
         [1, 2, 3]
     """
@@ -171,13 +174,15 @@ class DictToClassRepr:
                 setattr(
                     self
                     , key
-                    , [ObjRepr(x) if isinstance(x, dict) else x for x in val]
+                    , [DictToClassRepr(x)
+                        if isinstance(x, dict)
+                        else x for x in val]
                 )
             else:
                 setattr(
                     self
                     , key
-                    , ObjRepr(val) if isinstance(val, dict) else val
+                    , DictToClassRepr(val) if isinstance(val, dict) else val
                 )
 
 
@@ -186,49 +191,6 @@ def rootdir() -> str:
         return os.path.abspath(os.path.dirname(sys.executable))
     else:
         return os.path.abspath(os.path.dirname(__file__))
-
-
-class SQLiteConnection:
-    """Context manager that auto-commits and closes connection on exit."""
-
-    def __init__(self, db_name, read_only=False):
-        """Constructor"""
-        self.db_name = db_name
-        self.read_only = read_only
-
-    def __enter__(self):
-        """
-        Open the database connection
-        """
-        fp = os.path.abspath(self.db_name)
-        if self.read_only:
-            self.conn = sqlite3.connect('file:/{}?mode=ro'.format(fp), uri=True)
-        else:
-            self.conn = sqlite3.connect(fp)
-        return self.conn
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Close the connection
-        """
-        if not self.read_only:
-            self.conn.commit()
-        self.conn.close()
-
-
-def sqlite_pull(db_name, sql) -> List:
-    with SQLiteConnection(db_name=db_name, read_only=True) as con:
-        cursor = con.cursor()
-        cursor.execute(sql)
-        return cursor.fetchall()
-
-
-def sqlite_delete_row(db_name, table, id_fieldname, id_value) -> None:
-    with SQLiteConnection(db_name=db_name, read_only=False) as con:
-        con.execute(
-            "DELETE FROM {t} WHERE {n} = {v}"
-            .format(t=table, n=id_fieldname, v=id_value)
-        )
 
 
 def valid_sql_field_name(field_name: str) -> bool:
@@ -247,6 +209,6 @@ def valid_sql_field_name(field_name: str) -> bool:
         return True
     return False
 
-if __name__ == "__main__":
-    import doctest
-    doctest.testmod()
+# if __name__ == "__main__":
+#     import doctest
+#     doctest.testmod()

@@ -5,20 +5,25 @@ from functools import partial
 import os
 from subprocess import Popen
 import time
-from typing import Any, Dict, List, NamedTuple, Set, Tuple
+from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
 import xlwt
 
-from delegates import ComboboxDelegate
-from json_config import SimpleJsonConfig
+from config import cfg
+from foreign_key_delegate import ForeignKeyDelegate
 from logger import log_error
 from model import AbstractModel
-from query_manager import Field, Filter, query_manager_config
+from schema import Filter, Table
 from utilities import delete_old_outputs, rootdir, timestr
 
-Control = NamedTuple('Control', [('handle', QtGui.QLineEdit), ('type', str)])
-Criteria = namedtuple('Criteria', 'field_name value field_type operator')
+
+class Control:
+    def __init__(self, *, handle, display_name: str, control_type) -> None:
+        # TODO make type to represent pyqt controls
+        self.handle = handle
+        self.display_name = display_name
+        self.control_type = control_type
 
 
 class DatasheetView(QtGui.QWidget):
@@ -27,13 +32,13 @@ class DatasheetView(QtGui.QWidget):
     """
     exit_signal = QtCore.pyqtSignal()
 
-    def __init__(self, config, parent=None):
+    def __init__(self, table: Table, parent=None):
         super(DatasheetView, self).__init__()
         self.setWindowFlags = (
             QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
-        self.model = AbstractModel(config=config)
+        self.model = AbstractModel(table=table)
         self.table = QtGui.QTableView()
         self.table.setSortingEnabled(True)
         self.query_controls = {}
@@ -43,7 +48,7 @@ class DatasheetView(QtGui.QWidget):
 
     #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
-        self.btn_reset = QtGui.QPushButton('&Reset')
+        self.btn_reset = QtGui.QPushButton('&Reset Filters')
         self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
         self.add_foreign_key_comboboxes()
@@ -59,11 +64,7 @@ class DatasheetView(QtGui.QWidget):
         self.layout.setColumnStretch(0, 1)  # query designer
         self.layout.setColumnStretch(1, 6)  # ds and summary
 
-        self.query_designer = QueryDesigner(
-            filters=self.model._query_manager.filters
-            , max_display_rows=self.model._query_manager.max_display_rows
-            , max_export_rows=self.model._query_manager.max_export_rows
-        )
+        self.query_designer = QueryDesigner(filters=self.model.query_manager.table.filters)
         self.layout.addWidget(self.query_designer, 0, 0, 1, 1, QtCore.Qt.AlignTop)
 
         ds_layout = QtGui.QGridLayout()
@@ -74,6 +75,7 @@ class DatasheetView(QtGui.QWidget):
         ds_layout.addWidget(self.table, 1, 0, 1, 3)
         self.layout.addLayout(ds_layout, 0, 1, 1, 1, QtCore.Qt.AlignTop)
 
+
         bottom_bar = QtGui.QGridLayout()
         self.statusbar = QtGui.QStatusBar()
         self.statusbar.showMessage("")
@@ -83,8 +85,9 @@ class DatasheetView(QtGui.QWidget):
         bottom_bar.setColumnStretch(0, 10)
         bottom_bar.setColumnStretch(1, 1)
         bottom_bar.setColumnStretch(2, 1)
-        bottom_bar.addWidget(self.btn_undo, 0, 1)
-        bottom_bar.addWidget(self.btn_save, 0, 2)
+        if self.model.query_manager.table.editable:
+            bottom_bar.addWidget(self.btn_undo, 0, 1)
+            bottom_bar.addWidget(self.btn_save, 0, 2)
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
 
     #   CONNECT SIGNALS
@@ -96,48 +99,41 @@ class DatasheetView(QtGui.QWidget):
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
         self.model.rows_exported_signal.connect(self.show_rows_exported)
         self.model.rows_returned_signal.connect(self.show_rows_returned)
+        # self.model.layoutChanged.connect(self.open_comboboxes)
+        # self.model.rows_fetched_signal.connect(self.open_comboboxes)
         self.query_designer.add_criteria_signal.connect(self.add_query_criteria)
         self.query_designer.error_signal.connect(self.set_status)
         self.query_designer.export_signal.connect(self.export_all)
         self.query_designer.pull_signal.connect(self.pull)
         self.query_designer.reset_signal.connect(self.reset_query)
         self.query_designer.stop_export_signal.connect(
-            self.model._query_manager._exporter.signals.exit.emit)
+            self.model.query_manager.exporter.signals.exit.emit)
         self.btn_undo.clicked.connect(self.undo)
 
     def add_foreign_key_comboboxes(self) -> None:
-        cbo_fields = {
-            key: val
-            for key, val in self.model.foreign_keys.items()
-            if key in self.model.editable_fields
-        }
-        for key, val in cbo_fields.items():
-            self.table.setItemDelegateForColumn(
-                key,
-                ComboboxDelegate(
-                    model=self.model,
-                    itemlist=sorted(val.values())
+        if self.model.query_manager.table.editable:
+            for key, val in self.model.foreign_keys.items():
+                self.table.setItemDelegateForColumn(
+                    key,
+                    ForeignKeyDelegate(
+                        model=self.model,
+                        foreign_keys=self.model.foreign_keys[key]
+                    )
                 )
-            )
 
-    def add_query_criteria(self, criteria: Criteria):
-        field = Field(name=criteria.field_name, type=criteria.field_type)
-        self.model._query_manager.add_criteria(
-            field=field
-            , value=criteria.value
-            , operator=criteria.operator
-        )
+    def add_query_criteria(self, filter_ix, value) -> None:
+        self.model.query_manager.add_criteria(filter_ix, value)
 
     def exit(self):
         self.stop_everything.emit()
 
     def export_all(self) -> None:
-        self.model.export()
+        self.model.query_manager.export()
 
     def export_visible(self) -> None:
         self.to_excel(
-            data=self.model._modified_data,
-            header=self.model._query_manager.headers
+            data=self.model.modified_data,
+            header=self.model.query_manager.headers
         )
 
     @QtCore.pyqtSlot(int)
@@ -207,7 +203,7 @@ class DatasheetView(QtGui.QWidget):
         QtGui.QApplication.clipboard().setText(str_array)
 
     def pull(self):
-        self.set_status("{}: Pulling {}".format(timestr(), self.model._query_manager.str_criteria))
+        self.set_status("{}: Pulling".format(timestr()))
         self.model.pull()
 
     def contextMenuEvent(self, event):
@@ -231,7 +227,7 @@ class DatasheetView(QtGui.QWidget):
     def make_cell_context_menu(self, menu, row_ix, col_ix):
         """Create the mneu displayed when right-clicking on a cell."""
         try:
-            val = self.model._modified_data[row_ix][col_ix]
+            val = self.model.modified_data[row_ix][col_ix]
         except IndexError:
             val = ""
 
@@ -294,24 +290,25 @@ class DatasheetView(QtGui.QWidget):
             , self.model.reset
         )
 
-        menu.addSeparator()
-        model_ix = self.model.index(row_ix, col_ix)
-        menu.addAction(
-            "Add row"
-            , partial(
-                self.model.insertRow
-                , ix=model_ix
-                , row=0
+        if self.model.query_manager.table.editable:
+            menu.addSeparator()
+            model_ix = self.model.index(row_ix, col_ix)
+            menu.addAction(
+                "Add row"
+                , partial(
+                    self.model.insertRow
+                    , ix=model_ix
+                    , row=0
+                )
             )
-        )
-        menu.addAction(
-            "Remove row"
-            , partial(
-                self.model.removeRow
-                , ix=model_ix
-                , row=0
+            menu.addAction(
+                "Remove row"
+                , partial(
+                    self.model.removeRow
+                    , ix=model_ix
+                    , row=0
+                )
             )
-        )
 
 
         menu.addSeparator()
@@ -397,6 +394,12 @@ class DatasheetView(QtGui.QWidget):
         )
         self.model.filter_set(col_ix, checked_values)
 
+    @QtCore.pyqtSlot()
+    def open_comboboxes(self):
+        if self.model.query_manager.table.editable:
+            for key, val in self.model.foreign_keys.items():
+                for row in range(self.model.rowCount()):
+                    self.table.openPersistentEditor(self.model.index(row, key))
 
     @QtCore.pyqtSlot(str)
     def outside_error(self, msg):
@@ -429,24 +432,26 @@ class DatasheetView(QtGui.QWidget):
 
     def reset_query(self):
         self.txt_search.setText('')
-        self.model._query_manager.reset()
+        self.model.query_manager.reset()
         self.model.full_reset()
         self.set_status("")
 
     def save(self):
-        results = self.model.save()
-        if results:
-            self.set_status(
-                "{} rows added; {} rows deleted; {} rows updated; {} errors"
-                .format(
-                    results['rows_added']
-                    , results['rows_deleted']
-                    , results['rows_updated']
-                    , results['rows_errored']
+        try:
+            results = self.model.save()
+            if results:
+                self.set_status(
+                    "{} rows added; {} rows deleted; {} rows updated"
+                    .format(
+                        results['rows_added']
+                        , results['rows_deleted']
+                        , results['rows_updated']
+                    )
                 )
-            )
-        else:
-            self.set_status('No changes to save')
+            else:
+                self.set_status('No changes to save')
+        except Exception as e:
+            self.set_status("Error saving changes: {}".format(e))
 
     @QtCore.pyqtSlot(str)
     def set_status(self, msg: str) -> None:
@@ -465,94 +470,64 @@ class DatasheetView(QtGui.QWidget):
     def show_rows_returned(self, msg):
         self.set_status('{}'.format(msg))
 
-    @QtCore.pyqtSlot(dict)
-    def refresh_summary(self, totals):
-        self.summary.setRowCount(len(totals))
-        for i, (key, val) in enumerate(totals.items()):
-            measure = QtGui.QTableWidgetItem(key)
-            value = QtGui.QTableWidgetItem(val)
-            value.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
-            self.summary.setItem(i, 0, measure)
-            self.summary.setItem(i, 1, value)
-        self.summary.resizeColumnsToContents()
-
     def reset_status(self):
         self.statusbar.showMessage("")
 
-    def summary_frame(self):
-        tbl = QtGui.QTableWidget()
-
-        tbl.setRowCount(0) #len(self.model.totals))
-        tbl.setColumnCount(2)
-        tbl.setAlternatingRowColors(True)
-        tbl.setHorizontalHeaderLabels(['Measure', 'Value'])
-        tbl.resizeColumnsToContents()
-        return tbl
-
     def undo(self):
+        self.set_status('')
         self.model.undo()
+
 
 class QueryDesigner(QtGui.QWidget):
     """Populate a layout with filter controls"""
 
-    add_criteria_signal = QtCore.pyqtSignal(Criteria)
+    add_criteria_signal = QtCore.pyqtSignal(int, str)
     error_signal = QtCore.pyqtSignal()
     export_signal = QtCore.pyqtSignal()
     pull_signal = QtCore.pyqtSignal()
     reset_signal = QtCore.pyqtSignal()
     stop_export_signal = QtCore.pyqtSignal()
 
-    def __init__(self, filters: List[Filter], max_display_rows: int
-                , max_export_rows: int) -> None:
+    def __init__(self, filters: List[Filter]) -> None:
         super(QueryDesigner, self).__init__()
 
         self._current_row = 0  # type: int
-        self._filters = filters  # type List[Filter]
-        self._max_display_rows = max_display_rows
-        self._max_export_rows = max_export_rows
+        self.filters = filters  # type List[Filter]
 
         self.layout = QtGui.QGridLayout()
         self.layout.setColumnMinimumWidth(1, 120)
         self.setLayout(self.layout)
-        self.query_controls = {}  # type: Dict[str, Control]
+        self.query_controls = {}
         self.create_controls()
 
-
     @log_error
-    def add_row(self, field_name: str, field_type: str, operator: str) -> None:
-        lbl = QtGui.QLabel('{n} {o}'.format(n=field_name, o=operator))
+    def add_row(self, filter: Filter) -> None:
+        lbl = QtGui.QLabel(filter.display_name)
         txt = QtGui.QLineEdit()
-        ctrl_name = '{n}_{t}_{o}'.format(n=field_name, t=field_type, o=operator)
-        self.query_controls[ctrl_name] = Control(handle=txt, type=field_type)
+        self.query_controls[self._current_row] = txt
+
         self.layout.addWidget(lbl, self._current_row, 0, 1, 1)
         self.layout.addWidget(txt, self._current_row, 1, 1, 1)
 
-        cmd = lambda v=txt.text(), n=field_name, t=field_type, o=operator, func=self.add_criteria:\
-            func(value=v, field_name=n, field_type=t, operator=o)
+        cmd = lambda v=txt.text(), n=self._current_row, func=self.add_criteria:\
+            func(filter_ix=n, value=v)
         txt.textChanged.connect(cmd)
 
         self._current_row += 1
 
-    def add_criteria(self, value: str, field_name: str, field_type: str, operator: str) -> None:
-        criteria = Criteria(
-            field_name=field_name
-            , value=value
-            , field_type=field_type
-            , operator=operator
-        )
-        self.add_criteria_signal.emit(criteria)
+    def add_criteria(self, filter_ix: int, value: str) -> None:
+        self.add_criteria_signal.emit(filter_ix, value)
 
     @log_error
     def create_controls(self) -> None:
-        for f in self._filters[:10]:  # cap at 10 maximum filter input boxes
-            self.add_row(field_name=f.field, field_type=f.type, operator=f.operator)
+        for f in self.filters[:10]:  # cap at 10 maximum filter input boxes
+            self.add_row(f)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
         self.btn_reset_query.clicked.connect(self.reset)
         self.layout.addWidget(self.btn_reset_query, self._current_row, 0, 1, 1)
 
-        # max_display_rows = '{:,}'.format(self._max_display_rows)
-        pull_btn_txt = 'Show' #''&Show Top {} rows'.format(max_display_rows)
+        pull_btn_txt = 'Show'
         self.btn_pull = QtGui.QPushButton(pull_btn_txt)
         self.btn_pull.clicked.connect(self.pull_signal.emit)
         self.layout.addWidget(self.btn_pull, self._current_row, 1, 1, 1)
@@ -562,15 +537,14 @@ class QueryDesigner(QtGui.QWidget):
         self.btn_stop_export.clicked.connect(self.stop_export_signal.emit)
         self.layout.addWidget(self.btn_stop_export, self._current_row, 0, 1, 1)
 
-        max_export_rows = '{:,}'.format(self._max_export_rows)
-        export_btn_txt = 'Export'  # 'E&xport Top {} rows'.format(max_export_rows)
+        export_btn_txt = 'Export'
         self.btn_export = QtGui.QPushButton(export_btn_txt)
         self.btn_export.clicked.connect(self.export_signal.emit)
         self.layout.addWidget(self.btn_export, self._current_row, 1, 1, 1)
 
     def reset(self):
-        for key, val in self.query_controls.items():
-            val.handle.setText('')
+        for val in self.query_controls.values():
+            val.setText('')
         self.reset_signal.emit()
 
 
@@ -589,42 +563,34 @@ class MainView(QtGui.QDialog):
         self.datasheet_controls = []
         self.query_designer_visibility = True
 
-        self.app_config = SimpleJsonConfig(os.path.join('config', 'app.json'))
-        app_name = self.app_config.get_or_set_variable('app_name', 'TestApp')
-        datasheets = self.app_config.get_or_set_variable(
-            'datasheets', {
-                'SalesHistory1': os.path.join('config', 'customer_config.json')
-                , 'SalesHistory2': os.path.join('config', 'customer_config2.json')
-            }
-        )
+        app_name = cfg.app.display_name
 
         self.setWindowTitle(app_name)
 
         tabs = QtGui.QTabWidget()
-        for name, config_path in sorted(datasheets.items()):
-            config = query_manager_config(config_path)
-            ds = DatasheetView(config=config)
+        for tbl in cfg.tables:
+            ds = DatasheetView(table=tbl)
             self.datasheet_controls.append(ds)
-            self.exit_signal.connect(ds.exit_signal.emit)
-            tabs.addTab(ds, name)
+            # self.exit_signal.connect(ds.exit_signal.emit)
+            tabs.addTab(ds, tbl.display_name)
 
         mainLayout = QtGui.QVBoxLayout()
         menubar = QtGui.QMenuBar()
         mainLayout.addWidget(menubar)
         filemenu = menubar.addMenu('&File')
         filemenu.addAction('Open Output Folder', self.open_output_folder)
-        settings_menu = filemenu.addMenu("Settings")
-        settings_menu.addAction(
-            'App'
-            , lambda cfg_path=os.path.join('config', 'app.json')
-            , func=self.open_settings: func(cfg_path)
-        )
-        for key, val in sorted(datasheets.items()):
-            settings_menu.addAction(
-                key
-                , lambda cfg_path=val
-                , func=self.open_settings: func(cfg_path)
-            )
+        # settings_menu = filemenu.addMenu("Settings")
+        # settings_menu.addAction(
+        #     'App'
+        #     , lambda cfg_path=os.path.join('config', 'app.json')
+        #     , func=self.open_settings: func(cfg_path)
+        # )
+        # for key, val in sorted(datasheets.items()):
+        #     settings_menu.addAction(
+        #         key
+        #         , lambda cfg_path=val
+        #         , func=self.open_settings: func(cfg_path)
+        #     )
         filemenu = menubar.addMenu('&View')
         filemenu.addAction('Toggle Query Designer', self.toggle_query_designer)
 
@@ -637,10 +603,10 @@ class MainView(QtGui.QDialog):
             os.mkdir(folder)
         os.startfile(folder)
 
-    def open_settings(self, config_path) -> None:
-        self.config_popup = ConfigPopup(config_path)
-        # self.config_popup.setGeometry(QtCore.QRect(100, 100, 400, 200))
-        self.config_popup.show()
+    # def open_settings(self, config_path) -> None:
+    #     self.config_popup = ConfigPopup(config_path)
+    #     # self.config_popup.setGeometry(QtCore.QRect(100, 100, 400, 200))
+    #     self.config_popup.show()
 
     def toggle_query_designer(self):
         if self.query_designer_visibility:
@@ -655,16 +621,29 @@ class MainView(QtGui.QDialog):
                 self.query_designer_visibility = True
 
 
-class ConfigPopup(QtGui.QWidget):
+# class ConfigPopup(QtGui.QWidget):
+#
+#     def __init__(self, config_path) -> None:
+#         super(ConfigPopup, self).__init__()
+#         self.setWindowTitle("Config")
+#         self.layout = QtGui.QVBoxLayout()
+#         self.setLayout(self.layout)
+#         self.layout.addWidget(QtGui.QLabel("file path: {}".format(config_path)))
+#         config = SimpleJsonConfig(json_path=config_path)
+#         for key, val in config.all_variables.items():
+#             self.layout.addWidget(QtGui.QLabel("{k}: {v}".format(k=key, v=val)))
 
-    def __init__(self, config_path) -> None:
-        super(ConfigPopup, self).__init__()
-        self.setWindowTitle("Config")
-        self.layout = QtGui.QVBoxLayout()
-        self.setLayout(self.layout)
-        self.layout.addWidget(QtGui.QLabel("file path: {}".format(config_path)))
-        config = SimpleJsonConfig(json_path=config_path)
-        for key, val in config.all_variables.items():
-            self.layout.addWidget(QtGui.QLabel("{k}: {v}".format(k=key, v=val)))
+# if __name__ == "__main__":
+    # import doctest
+    # doctest.testmod()
 
+    # import sys
+    # app = QtGui.QApplication(sys.argv)
+    # tbl = cfg.tables[0]
+    # d = DatasheetView(tbl)
+    # d.show()
+    # app.exec_()
+    # sys.exit(0)
+    # print(q.table.filters)
+    # print(q.foreign_keys)
 

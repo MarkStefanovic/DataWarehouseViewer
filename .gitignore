@@ -102,4 +102,5 @@ test.db
 view.spec
 errors.txt
 *.bat
+*.txt
 setup.py

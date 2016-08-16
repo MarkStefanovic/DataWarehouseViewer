@@ -5,7 +5,7 @@ View (Input) -> Model -> Query Manager -> Exporter|Runner -> Data -> Query Manag
 
 No shortcuts are taken.
 """
-
+from enum import Enum
 import os
 import sys
 
@@ -13,6 +13,7 @@ from PyQt4 import QtGui
 
 from view import MainView
 from logger import rotating_log
+
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
@@ -39,10 +40,9 @@ if __name__ == '__main__':
         app.exec_()
         sys.exit(0)
     except SystemExit:
-        print("Closing Window...")
-        main_view.exit_signal.emit()
+        # print("Closing Window...")
+        # main_view.exit_signal.emit()
         os._exit(0)  # cheap hack
     except Exception as e:
-        err_msg = "Error {}".format(e)
-        main_logger.error(err_msg)
+        main_logger.error("Error {}".format(e))
         sys.exit(app.exec_())
