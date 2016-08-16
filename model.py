@@ -43,6 +43,23 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.query_manager.rows_exported_signal.connect(self.rows_exported_signal.emit)
         self.query_manager.rows_returned_signal.connect(self.rows_returned_signal.emit)
 
+    def add_row(self, ix: QtCore.QModelIndex) -> None:
+        dummies = {
+            FieldType.int: 0
+            , FieldType.float: 0.0
+            , FieldType.str: ''
+            , FieldType.date: '1900-01-01'
+        }
+        dummy_row = []  # type: list
+        for fld in self.query_manager.table.fields:
+            dummy_row.append(dummies[fld.dtype])
+        for i in self.foreign_keys.keys():
+            dummy_row[i] = next(fk for fk in self.foreign_keys[i])
+        dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
+        self.visible_data.insert(ix.row(), dummy_row)
+        self.modified_data.insert(0, dummy_row)
+        self.dataChanged.emit(ix, ix)
+
     def canFetchMore(self, index=QtCore.QModelIndex()):
         if len(self.visible_data) > self.rows_loaded:
             return True
@@ -138,10 +155,22 @@ class AbstractModel(QtCore.QAbstractTableModel):
         except Exception as e:
             self.error_signal.emit('Error modeling data: {}'.format(e))
 
+    def delete_row(self, ix: QtCore.QModelIndex) -> None:
+        row = ix.row()
+        pk = self.visible_data[row][self.query_manager.table.primary_key_index]
+        mod_row = next(
+            i for i, r
+            in enumerate(self.modified_data)
+            if r[self.query_manager.table.primary_key_index] == pk
+        )
+        del self.visible_data[row]
+        del self.modified_data[mod_row]
+        self.dataChanged.emit(ix, ix)
+
     def distinct_values(self, col_ix):
         return set(
-            str(self.fk_lookup(col=col_ix, val=val[col_ix]))
-            for val in self.visible_data
+            str(self.fk_lookup(col=col_ix, val=row[col_ix]))
+            for row in self.visible_data
         )
 
     def filter_equality(self, col_ix, val):
@@ -157,6 +186,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             row for row in self.visible_data
             if lkp(row[col_ix]) >= lkp(val)
         ]
+        # self.sort(col=col_ix, order=QtCore.Qt.AscendingOrder)
         self.filters_changed_signal.emit()
 
     def filter_less_than(self, col_ix, val):
@@ -165,6 +195,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             row for row in self.visible_data
             if lkp(row[col_ix]) <= lkp(val)
         ]
+        # self.sort(col=col_ix, order=QtCore.Qt.DescendingOrder)
         self.filters_changed_signal.emit()
 
     def filter_like(self, val, col_ix=None):
@@ -226,25 +257,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def headerData(self, col, orientation, role):
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
             return self.query_manager.headers[col]
-        return None
-
-    def insertRow(self, row: int, ix: QtCore.QModelIndex) -> bool:
-        dummies = {
-            FieldType.int: 0
-            , FieldType.float: 0.0
-            , FieldType.str: ''
-            , FieldType.date: '1900-01-01'
-        }
-        dummy_row = []  # type: list
-        for fld in self.query_manager.table.fields:
-            dummy_row.append(dummies[fld.dtype])
-        for i in self.foreign_keys.keys():
-            dummy_row[i] = next(fk for fk in self.foreign_keys[i])
-        dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
-        self.visible_data.insert(ix.row(), dummy_row)
-        self.modified_data.append(dummy_row)
-        self.dataChanged.emit(ix, ix)
-        return True
 
     def pull(self):
         self.rows_loaded = self.rows_per_page
@@ -258,18 +270,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def query_errored(self, msg):
         self.error_signal.emit(msg)
 
-    def removeRow(self, row: int, ix: QtCore.QModelIndex) -> bool:
-        pk = self.visible_data[row][self.query_manager.table.primary_key_index]
-        mod_row = next(
-            i for i, r
-            in enumerate(self.modified_data)
-            if r[self.query_manager.table.primary_key_index] == pk
-        )
-        del self.visible_data[ix.row()]
-        del self.modified_data[mod_row]
-        self.dataChanged.emit(ix, ix)
-        return True
-
     def reset(self):
         """reset filters - not pending changes"""
         self.layoutAboutToBeChanged.emit()
@@ -277,7 +277,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
         self.layoutChanged.emit()
 
-    def rowCount(self, index=QtCore.QModelIndex()):
+    def rowCount(self, index: QtCore.QModelIndex):
         if self.visible_data:
             if len(self.visible_data) <= self.rows_loaded:
                 return len(self.visible_data)
@@ -289,7 +289,19 @@ class AbstractModel(QtCore.QAbstractTableModel):
         if chg['added'] or chg['deleted'] or chg['updated']:
             try:
                 results = self.query_manager.save_changes(chg)
+
+                def update_id(old_id, new_id):
+                    row = next(
+                        i for i, row in enumerate(self.modified_data)
+                        if row[self.query_manager.table.primary_key_index] == old_id
+                    )
+                    self.modified_data[row][self.query_manager.table.primary_key_index] = new_id
+
+                for m in results['new_rows_id_map']:
+                    update_id(m[0], m[1])
+
                 self.original_data = deepcopy(self.modified_data)
+
                 return results
             except:
                 raise
@@ -307,7 +319,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.dataChanged.emit(ix, ix)
         return True
 
-    @log_error
     def sort(self, col, order):
         """sort table by given column number col"""
         try:

@@ -296,17 +296,15 @@ class DatasheetView(QtGui.QWidget):
             menu.addAction(
                 "Add row"
                 , partial(
-                    self.model.insertRow
+                    self.model.add_row
                     , ix=model_ix
-                    , row=0
                 )
             )
             menu.addAction(
                 "Remove row"
                 , partial(
-                    self.model.removeRow
+                    self.model.delete_row
                     , ix=model_ix
-                    , row=0
                 )
             )
 
