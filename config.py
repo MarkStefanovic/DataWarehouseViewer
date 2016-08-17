@@ -1,4 +1,4 @@
-
+from itertools import chain
 from typing import (
     Optional,
     List
@@ -54,7 +54,7 @@ class Config:
 
     @immutable_property
     def tables(self) -> List[Table]:
-        return [f for f in self.facts] + [d for d in self.dimensions]
+        return chain(self.facts, self.dimensions)
 
 
 cfg = Config(
