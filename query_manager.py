@@ -1,7 +1,7 @@
 """This module is responsible for procuring data for the model to prep and send to view.
 
 """
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from PyQt4 import QtCore
 
@@ -19,11 +19,7 @@ class QueryManager(QtCore.QObject):
     """Create a query from user input."""
 
     error_signal = QtCore.pyqtSignal(str)
-    exit_signal = QtCore.pyqtSignal()
     query_results_signal = QtCore.pyqtSignal(list)
-    row_updated_signal = QtCore.pyqtSignal(str, tuple, int)
-    rows_returned_signal = QtCore.pyqtSignal(str)
-    rows_exported_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, table: Table) -> None:
         super(QueryManager, self).__init__()
@@ -33,14 +29,7 @@ class QueryManager(QtCore.QObject):
         self.table = table
 
     #   Connect Signals
-        self.exporter.signals.error.connect(self.error_signal.emit)
-        self.exporter.signals.error.connect(self.error_signal.emit)
-        self.exporter.signals.rows_exported.connect(self.rows_exported_signal.emit)
-        self.exit_signal.connect(self.exporter.signals.exit.emit)
-        self.exit_signal.connect(self.runner.signals.exit.emit)
-        self.runner.signals.error.connect(self.error_signal.emit)
         self.runner.signals.results.connect(self.process_results)
-        self.runner.signals.rows_returned_msg.connect(self.rows_returned_signal.emit)
 
     @log_error
     def add_criteria(self, filter_ix: int, value: str) -> None:
@@ -100,18 +89,23 @@ class QueryManager(QtCore.QObject):
         """Persist a change to the database."""
 
         trans = Transaction()
+        new_rows_id_map = []  # type: List[Tuple[int, int]]
         try:
             for row in changes['deleted']:
                 trans.execute(self.table.delete_row(row[self.table.primary_key_index]))
 
             for row in changes['added']:
-                trans.execute(self.table.add_row(values=list(row)))
+                id = row[self.table.primary_key_index]
+                new_id = trans.execute(self.table.add_row(values=list(row)))
+                new_rows_id_map.append((id, new_id))
 
             for row in changes['updated']:
                 id = row[self.table.primary_key_index]
                 trans.execute(self.table.update_row(id=id, values=list(row)))
 
-            return trans.commit()
+            results = trans.commit()
+            results['new_rows_id_map'] = new_rows_id_map
+            return results
 
         except:
             raise
@@ -123,24 +117,3 @@ class QueryManager(QtCore.QObject):
     @property
     def sql_export(self) -> str:
         return self.table.select(max_rows=cfg.app.maximum_export_rows)
-
-
-
-# if __name__ == "__main__":
-#     import doctest
-#     doctest.testmod()
-#
-#     from PyQt4.QtGui import QApplication
-#     import sys
-#     a = QApplication(sys.argv)
-#
-#
-#     from sqlalchemy.dialects import postgresql
-#     tbl = cfg.tables[0]
-#     q = QueryManager(tbl)
-#     print(q.table.filters)
-#     print(q.foreign_keys)
-#     print(q.sql_display.compile(dialect=postgresql.dialect()))
-#     q.pull()
-#
-#     a.exec_()

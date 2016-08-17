@@ -30,7 +30,6 @@ class DatasheetView(QtGui.QWidget):
     """
     This class takes a model as an input and creates an editable datasheet therefrom.
     """
-    exit_signal = QtCore.pyqtSignal()
 
     def __init__(self, table: Table, parent=None):
         super(DatasheetView, self).__init__()
@@ -91,18 +90,24 @@ class DatasheetView(QtGui.QWidget):
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
 
     #   CONNECT SIGNALS
-        self.exit_signal.connect(self.model.exit_signal.emit)
+        # Error Signals
+        self.query_designer.error_signal.connect(self.outside_error)
+        self.model.error_signal.connect(self.outside_error)
+        self.model.query_manager.error_signal.connect(self.outside_error)
+        self.model.query_manager.runner.signals.error.connect(self.outside_error)
+        self.model.query_manager.exporter.signals.error.connect(self.outside_error)
+
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
         self.btn_save.clicked.connect(self.save)
-        self.model.error_signal.connect(self.outside_error)
+        # self.model.error_signal.connect(self.outside_error)
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
-        self.model.rows_exported_signal.connect(self.show_rows_exported)
-        self.model.rows_returned_signal.connect(self.show_rows_returned)
+        self.model.query_manager.exporter.signals.rows_exported.connect(self.show_rows_exported)
+        self.model.query_manager.runner.signals.rows_returned_msg.connect(self.show_rows_returned)
         # self.model.layoutChanged.connect(self.open_comboboxes)
         # self.model.rows_fetched_signal.connect(self.open_comboboxes)
         self.query_designer.add_criteria_signal.connect(self.add_query_criteria)
-        self.query_designer.error_signal.connect(self.set_status)
+        # self.query_designer.error_signal.connect(self.set_status)
         self.query_designer.export_signal.connect(self.export_all)
         self.query_designer.pull_signal.connect(self.pull)
         self.query_designer.reset_signal.connect(self.reset_query)
@@ -231,7 +236,8 @@ class DatasheetView(QtGui.QWidget):
         except IndexError:
             val = ""
 
-    #   Text Search Box: add input box to search for values in the column containing the search term
+    #   TODO: Text Search Box: add input box to search for values in the column
+    #           containing the search term
         self.col_like = QtGui.QLineEdit()
         self.col_like.setPlaceholderText("Text like")
         txt_wac = QtGui.QWidgetAction(menu)

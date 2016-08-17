@@ -6,7 +6,7 @@ import uuid
 from sortedcollections import ValueSortedDict
 from typing import Any, Dict
 
-from PyQt4 import QtCore
+from PyQt4 import QtCore, QtGui
 from sortedcontainers import SortedSet
 
 from config import cfg
@@ -20,10 +20,6 @@ from utilities import immutable_property
 class AbstractModel(QtCore.QAbstractTableModel):
     filters_changed_signal = QtCore.pyqtSignal()
     error_signal = QtCore.pyqtSignal(str)
-    exit_signal = QtCore.pyqtSignal()
-    rows_returned_signal = QtCore.pyqtSignal(str)
-    rows_exported_signal = QtCore.pyqtSignal(int)
-    rows_fetched_signal = QtCore.pyqtSignal()
 
     def __init__(self, table: Table):
         super(AbstractModel, self).__init__()
@@ -37,11 +33,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.rows_loaded = 50
 
     #   Connect Signals
-        self.exit_signal.connect(self.query_manager.exit_signal.emit)
-        self.query_manager.error_signal.connect(self.error_signal.emit)
         self.query_manager.query_results_signal.connect(self.update_view)
-        self.query_manager.rows_exported_signal.connect(self.rows_exported_signal.emit)
-        self.query_manager.rows_returned_signal.connect(self.rows_returned_signal.emit)
 
     def add_row(self, ix: QtCore.QModelIndex) -> None:
         dummies = {
@@ -99,7 +91,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         )
         self.rows_loaded += rows_to_fetch
         self.endInsertRows()
-        self.rows_fetched_signal.emit()
 
     def field_totals(self, col_ix: int) -> list:
         totals = []
@@ -142,7 +133,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         }
         fld = self.query_manager.table.fields[index.column()]
         val = self.visible_data[index.row()][index.column()]
-
         try:
             if not index.isValid():
                 return
@@ -168,7 +158,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.dataChanged.emit(ix, ix)
 
     def distinct_values(self, col_ix):
-        return set(
+        return SortedSet(
             str(self.fk_lookup(col=col_ix, val=row[col_ix]))
             for row in self.visible_data
         )
@@ -305,7 +295,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 return results
             except:
                 raise
-        # else no changes to save, implicit None return
+        # else no changes to save, view displays 'no changes' when this function returns None
 
     def setData(self, ix: QtCore.QModelIndex, value: Any, role: int=QtCore.Qt.EditRole) -> bool:
         pk = self.visible_data[ix.row()][self.query_manager.table.primary_key_index]
@@ -336,7 +326,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
             if order == QtCore.Qt.DescendingOrder:
                 self.visible_data.reverse()
             self.layoutChanged.emit()
-            self.rows_fetched_signal.emit()
         except Exception as e:
             err_msg = "Error sorting data: {}".format(e)
             self.error_signal.emit(err_msg)

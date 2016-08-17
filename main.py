@@ -40,9 +40,7 @@ if __name__ == '__main__':
         app.exec_()
         sys.exit(0)
     except SystemExit:
-        # print("Closing Window...")
-        # main_view.exit_signal.emit()
-        os._exit(0)  # cheap hack
+        os._exit(0)
     except Exception as e:
         main_logger.error("Error {}".format(e))
         sys.exit(app.exec_())
