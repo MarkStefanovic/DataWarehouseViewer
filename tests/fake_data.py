@@ -1,25 +1,61 @@
 import os
 import random
-
+import sqlite3
 
 from faker import Faker
 
-from utilities import rootdir, SQLiteConnection
+from utilities import rootdir
 
 fake = Faker()
+
+
+class SQLiteConnection:
+    """Context manager that auto-commits and closes connection on exit."""
+
+    def __init__(self, db_name, read_only=False):
+        """Constructor"""
+        self.db_name = db_name
+        self.read_only = read_only
+
+    def __enter__(self):
+        """
+        Open the database connection
+        """
+        fp = os.path.abspath(self.db_name)
+        if self.read_only:
+            self.conn = sqlite3.connect('file:/{}?mode=ro'.format(fp), uri=True)
+        else:
+            self.conn = sqlite3.connect(fp)
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Close the connection
+        """
+        if not self.read_only:
+            self.conn.commit()
+        self.conn.close()
+
+def create_customers_table():
+    with SQLiteConnection(db_path) as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS dimCustomer (
+                ID INTEGER PRIMARY KEY
+                , CustomerName VARCHAR
+                , ShippingAddress VARCHAR
+            )
+        """)
 
 
 def create_sales_history_table():
     with SQLiteConnection(db_path) as con:
         con.execute("""
-            CREATE TABLE IF NOT EXISTS SalesHistory (
+            CREATE TABLE IF NOT EXISTS factSales (
                 OrderID INTEGER PRIMARY KEY
                 , CustomerID INTEGER
                 , ProductID INTEGER
-                , CustomerName VARCHAR
                 , OrderDate DATETIME
                 , ShippingDate DATETIME
-                , ShippingAddress VARCHAR
                 , SalesAmount NUMERIC(19, 2)
             )
         """)
@@ -33,52 +69,62 @@ def delete_db():
         print(str(e))
 
 
-def insert_test_rows():
+def add_dummy_sales():
     with SQLiteConnection(db_path) as con:
         for _ in range(10000):
             con.execute(("""
-                INSERT INTO SalesHistory(
+                INSERT INTO factSales(
                   CustomerID
                   , ProductID
-                  , CustomerName
                   , OrderDate
                   , ShippingDate
-                  , ShippingAddress
                   , SalesAmount
                 ) VALUES (
                   '{customer_id}'
                   , '{product_id}'
-                  , '{customer_name}'
                   , '{order_date}'
                   , '{shipping_date}'
-                  , '{shipping_address}'
                   , '{sales_amount}'
                 )
             """).format(
-                customer_id=random.randint(1, 999999)
+                customer_id=random.randint(1, 1000)
                 , product_id=random.randint(1, 10)
-                , customer_name=fake.name()
                 , order_date=fake.date_time()
                 , shipping_date=fake.date_time()
-                , shipping_address=fake.address()
                 , sales_amount=round(random.random() * 1000, 2)
+            ))
+
+def add_dummy_customers():
+    with SQLiteConnection(db_path) as con:
+        for _ in range(1000):
+            con.execute(("""
+                INSERT INTO dimCustomer(
+                  CustomerName
+                  , ShippingAddress
+                ) VALUES (
+                  '{customer_name}'
+                  , '{shipping_address}'
+                )
+            """).format(
+                customer_name=fake.name()
+                , shipping_address=fake.address()
             ))
 
 
 def create_products_table():
     with SQLiteConnection(db_path) as con:
         con.execute("""
-            DROP TABLE IF EXISTS Products
+            DROP TABLE IF EXISTS dimProduct
         """)
         con.execute("""
-            CREATE TABLE Products (
+            CREATE TABLE dimProduct (
                 ID INTEGER PRIMARY KEY
                 , ProductName VARCHAR(100)
                 , ProductCategory VARCHAR(40)
             )
         """)
         con.execute("""
-            INSERT INTO Products (
+            INSERT INTO dimProduct (
               ProductName
               , ProductCategory
             )
@@ -106,9 +152,11 @@ def teardown():
 
 def reset_db():
     delete_db()
+    create_customers_table()
     create_sales_history_table()
     create_products_table()
-    insert_test_rows()
+    add_dummy_customers()
+    add_dummy_sales()
 
 
 if __name__ == '__main__':

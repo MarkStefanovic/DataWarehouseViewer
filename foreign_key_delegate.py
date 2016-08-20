@@ -1,6 +1,6 @@
-from typing import Dict
-
 from PyQt4 import QtCore, QtGui
+
+from config import cfg
 
 
 class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
@@ -9,15 +9,15 @@ class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
     """
     refresh_signal = QtCore.pyqtSignal()
 
-    def __init__(self, model, foreign_keys: Dict[int, str]) -> None:
+    def __init__(self, model, dimension: str) -> None:
         super().__init__(model)
         self.model = model
-        self.foreign_keys = foreign_keys
+        self.dimension = dimension
 
     def createEditor(self, parent, option, index):
         """Create the ComboBox editor view."""
         self.editor = QtGui.QComboBox(parent)
-        for key, val in self.foreign_keys.items():
+        for key, val in cfg.foreign_keys(self.dimension).items():
             self.editor.addItem(val, key)
         self.editor.installEventFilter(self)
         return self.editor

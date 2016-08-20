@@ -115,7 +115,7 @@ class Field:
         self.primary_key = primary_key
         self.filter_operators = filter_operators
 
-    @property
+    @immutable_property
     def default_format(self) -> FieldFormat:
         defaults = {
             FieldType.date: FieldFormat.date,
@@ -132,7 +132,7 @@ class Field:
         except:
             return value
 
-    @property
+    @immutable_property
     def schema(self):
         """Map the field to a sqlalchemy Column"""
         type_map = {
@@ -156,12 +156,12 @@ class Filter:
         self.operator = operator
         self.value = ''
 
-    @property
+    @immutable_property
     def display_name(self) -> str:
         suffix = self.operator.suffix
         return self.field.display_name + (" " + suffix if suffix else "")
 
-    @property
+    @immutable_property
     def filter(self) -> BinaryExpression:
         fld = self.field.schema
         operator_mapping = {
@@ -229,15 +229,15 @@ class Table:
     def field(self, name) -> Field:
         return next(fld for fld in self.fields if fld.name == name)
 
-    @property
+    @immutable_property
     def foreign_keys(self) -> Dict[int, Field]:
         return {i: fld for i, fld in enumerate(self.fields) if isinstance(fld, ForeignKey)}
 
-    @property
+    @immutable_property
     def primary_key(self) -> Field:
         return next(c for c in self.schema.columns if c.primary_key == True)
 
-    @property
+    @immutable_property
     def primary_key_index(self) -> int:
         return next(i for i, c in enumerate(self.schema.columns) if c.primary_key == True)
 
@@ -255,12 +255,12 @@ class Table:
                 s = s.where(f.filter)
         return s.limit(max_rows)
 
-    def update_row(self, id: int, values: List[str]) -> Update:
+    def update_row(self, *, pk: int, values: List[str]) -> Update:
         """Statement to update a row on the table given the primary key value."""
         for i, v in enumerate(values):
             if self.fields[i].dtype == FieldType.date:
                 values[i] = FieldType.date.value.convert_to_datetime(v)
-        return self.schema.update().where(self.primary_key == id).values(values)
+        return self.schema.update().where(self.primary_key == pk).values(values)
 
 
 @autorepr
@@ -316,7 +316,7 @@ class Dimension(Table):
 
         self.summary_field = summary_field
 
-    @property
+    @immutable_property
     def foreign_key_schema(self):
         display_fields = [
             self.field(n).schema
@@ -345,7 +345,7 @@ class ForeignKey(Field):
 
         self.dimension = dimension
 
-    @property
+    @immutable_property
     def schema(self):
         """Map the field to a sqlalchemy Column"""
         return sqa.Column(
@@ -378,7 +378,7 @@ class Fact(Table):
             editable=editable
         )
 
-    @property
+    @immutable_property
     def dimensions(self):
         return [fld.dimension for fld in self.foreign_keys.values()]
 

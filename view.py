@@ -45,6 +45,8 @@ class DatasheetView(QtGui.QWidget):
 
         self.table.setModel(self.model)
 
+        self.hide_pk()
+
     #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
         self.btn_reset = QtGui.QPushButton('&Reset Filters')
@@ -56,6 +58,8 @@ class DatasheetView(QtGui.QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.resizeColumnsToContents()
+        # self.table.horizontalHeader().setResizeMode(QtGui.QHeaderView.Stretch)
+        # self.table.horizontalHeader().setStretchLastSection(True)
 
     #   LAYOUT
         self.layout = QtGui.QGridLayout()
@@ -100,7 +104,6 @@ class DatasheetView(QtGui.QWidget):
         self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
         self.btn_save.clicked.connect(self.save)
-        # self.model.error_signal.connect(self.outside_error)
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
         self.model.query_manager.exporter.signals.rows_exported.connect(self.show_rows_exported)
         self.model.query_manager.runner.signals.rows_returned_msg.connect(self.show_rows_returned)
@@ -118,11 +121,12 @@ class DatasheetView(QtGui.QWidget):
     def add_foreign_key_comboboxes(self) -> None:
         if self.model.query_manager.table.editable:
             for key, val in self.model.foreign_keys.items():
+                dim = self.model.query_manager.table.foreign_keys[key].dimension
                 self.table.setItemDelegateForColumn(
                     key,
                     ForeignKeyDelegate(
                         model=self.model,
-                        foreign_keys=self.model.foreign_keys[key]
+                        dimension=dim
                     )
                 )
 
@@ -157,6 +161,10 @@ class DatasheetView(QtGui.QWidget):
             id = self.model.data(ix, QtCore.Qt.DisplayRole)
             selected_ids.append(id)
         return selected_ids
+
+    def hide_pk(self):
+        pk = self.model.query_manager.table.primary_key_index
+        self.table.hideColumn(pk)
 
     def hide_query_designer(self):
         self.layout.removeItem(self.query_designer)

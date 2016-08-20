@@ -1,5 +1,8 @@
 from itertools import chain
+
+from sortedcollections import ValueSortedDict
 from typing import (
+    Dict,
     Optional,
     List
 )
@@ -15,7 +18,6 @@ from schema import (
     SummaryField,
     Table,
 )
-
 from utilities import immutable_property
 
 class App:
@@ -41,20 +43,39 @@ class Config:
         facts: List[Fact]
     ) -> None:
 
+        super(Config, self).__init__()
+
         self.app = app
         self.dimensions = dimensions
         self.facts = facts
+        self._foreign_keys = {
+            tbl.table_name: {}
+            for tbl in dimensions
+        }  # type Dict[str, Dict[int, str]]
 
     @immutable_property
+    def tables(self) -> List[Table]:
+        return chain(self.facts, self.dimensions)
+
+    @property
     def foreign_key_lookups(self):
         return {
             tbl.table_name: tbl.foreign_key_schema
             for tbl in self.dimensions
         }
 
-    @immutable_property
-    def tables(self) -> List[Table]:
-        return chain(self.facts, self.dimensions)
+    def foreign_keys(self, dim: str) -> Dict[int, str]:
+        if self._foreign_keys[dim]:
+            return self._foreign_keys[dim]
+        self.pull_foreign_keys(dim)
+        return self._foreign_keys[dim]
+
+    def pull_foreign_keys(self, dim: str) -> None:
+        from db import fetch
+        self._foreign_keys[dim] = ValueSortedDict({
+            row[0]: str(row[1])
+            for row in fetch(self.foreign_key_lookups[dim])
+        })
 
 
 cfg = Config(
@@ -67,7 +88,7 @@ cfg = Config(
     ),
     dimensions=[
         Dimension(
-            table_name='Products',
+            table_name='dimProduct',
             display_name='Products',
             editable=True,
             fields=[
@@ -96,10 +117,40 @@ cfg = Config(
                 separator=' - '
             )
         )
+        , Dimension(
+            table_name='dimCustomer',
+            display_name='Customers',
+            editable=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.int,
+                    display_name='ID',
+                    primary_key=True
+                ),
+                Field(
+                    name='CustomerName',
+                    dtype=FieldType.str,
+                    display_name='Customer Name',
+                    filter_operators=[Operator.str_like]
+                ),
+                Field(
+                    name='ShippingAddress',
+                    dtype=FieldType.str,
+                    display_name='Shipping Address',
+                    filter_operators=[Operator.str_like]
+                ),
+            ],
+            summary_field=SummaryField(
+                display_fields=['CustomerName'],
+                display_name='Customer',
+                separator=' - '
+            )
+        )
     ],
     facts=[
         Fact(
-            table_name='SalesHistory',
+            table_name='factSales',
             display_name='Sales',
             editable=True,
             fields=[
@@ -112,18 +163,12 @@ cfg = Config(
                 ForeignKey(
                     name='ProductID',
                     display_name='Products',
-                    dimension='Products'
+                    dimension='dimProduct'
                 ),
-                Field(
+                ForeignKey(
                     name='CustomerID',
-                    dtype=FieldType.int,
-                    display_name='Customer'
-                ), # TODO make Customer Dimension to hook this into
-                Field(
-                    name='CustomerName',
-                    dtype=FieldType.str,
-                    display_name='Customer Name',
-                    filter_operators=[Operator.str_like]
+                    display_name='Customers',
+                    dimension='dimCustomer'
                 ),
                 Field(
                     name='OrderDate',
@@ -142,12 +187,6 @@ cfg = Config(
                         Operator.date_on_or_after,
                         Operator.date_on_or_before,
                     ]
-                ),
-                Field(
-                    name='ShippingAddress',
-                    dtype=FieldType.str,
-                    display_name='Shipping Address',
-                    filter_operators=[Operator.str_like]
                 ),
                 Field(
                     name='SalesAmount',

@@ -45,8 +45,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
         dummy_row = []  # type: list
         for fld in self.query_manager.table.fields:
             dummy_row.append(dummies[fld.dtype])
-        for i in self.foreign_keys.keys():
-            dummy_row[i] = next(fk for fk in self.foreign_keys[i])
+        for k, v in self.query_manager.table.foreign_keys.items():
+            dummy_row[k] = next(fk for fk in self.foreign_keys[k])
         dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
         self.visible_data.insert(ix.row(), dummy_row)
         self.modified_data.insert(0, dummy_row)
@@ -110,16 +110,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 , len(set(val[col_ix] for val in self.visible_data))))
         return totals
 
-    @immutable_property
-    def foreign_keys(self) -> Dict[int, Dict[int, str]]:
-        fks = {}
-        for col, fld in self.query_manager.table.foreign_keys.items():
-            fks[col] = ValueSortedDict({
-                row[0]: row[1]
-                for row in fetch(cfg.foreign_key_lookups[fld.dimension])
-            })
-        return fks
-
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
         return len(self.query_manager.table.fields)
 
@@ -131,16 +121,17 @@ class AbstractModel(QtCore.QAbstractTableModel):
             FieldType.float: QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
             FieldType.str: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
         }
-        fld = self.query_manager.table.fields[index.column()]
-        val = self.visible_data[index.row()][index.column()]
+        col = index.column()
+        fld = self.query_manager.table.fields[col]
+        val = self.visible_data[index.row()][col]
         try:
             if not index.isValid():
                 return
             elif role == QtCore.Qt.TextAlignmentRole:
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
-                if index.column() in self.foreign_keys.keys():
-                    return self.foreign_keys[index.column()][val]
+                if col in self.foreign_keys.keys():
+                    return self.foreign_keys[col][val]
                 return fld.format_value(val)
         except Exception as e:
             self.error_signal.emit('Error modeling data: {}'.format(e))
@@ -232,9 +223,16 @@ class AbstractModel(QtCore.QAbstractTableModel):
         return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
 
     def fk_lookup(self, val, col):
-        if col in self.foreign_keys.keys():
-            return self.foreign_keys.get(col).get(val)
+        if col in self.query_manager.table.foreign_keys.keys():
+            return self.foreign_keys[col][val]
         return val
+
+    @property
+    def foreign_keys(self) -> Dict[int, Dict[int, str]]:
+        return {
+            k: cfg.foreign_keys(v.dimension)
+            for k, v in self.query_manager.table.foreign_keys.items()
+        }
 
     def full_reset(self):
         self.layoutAboutToBeChanged.emit()
@@ -278,6 +276,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         chg = self.changes
         if chg['added'] or chg['deleted'] or chg['updated']:
             try:
+                # print('changes:', self.changes)
                 results = self.query_manager.save_changes(chg)
 
                 def update_id(old_id, new_id):
@@ -292,6 +291,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
                 self.original_data = deepcopy(self.modified_data)
 
+                if self.query_manager.table in cfg.dimensions:
+                    cfg.pull_foreign_keys(self.query_manager.table.table_name)
                 return results
             except:
                 raise
@@ -316,7 +317,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             if col in self.foreign_keys.keys():
                 self.visible_data = sorted(
                     self.visible_data
-                    , key=lambda row: self.foreign_keys[col][row[col]]
+                    , key=lambda row: self.fk_lookup(row[col], col)
                 )
             else:
                 self.visible_data = sorted(

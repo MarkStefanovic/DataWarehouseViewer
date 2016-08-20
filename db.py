@@ -19,6 +19,8 @@ class Transaction:
         self.rows_updated = 0
 
     def execute(self, cmd):
+        # from sqlalchemy.dialects import sqlite
+        # print(cmd.compile(dialect=sqlite.dialect()))
         try:
             result = self.connection.execute(cmd)
             if type(cmd) == Delete:
@@ -26,7 +28,7 @@ class Transaction:
                 return 0
             elif type(cmd) == Insert:
                 self.rows_added += 1
-                return result.inserted_primary_key
+                return result.inserted_primary_key[0]
             elif type(cmd) == Update:
                 self.rows_updated += 1
                 return 0
@@ -81,7 +83,3 @@ def iterrows(cmd) -> Generator:
     for row in con.execute(cmd):
         yield row
     con.close()
-
-# if __name__ == '__main__':
-#     with fetch('SELECT * FROM Products') as f:
-#         print(f)

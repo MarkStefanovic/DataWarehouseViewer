@@ -101,7 +101,7 @@ class QueryManager(QtCore.QObject):
 
             for row in changes['updated']:
                 id = row[self.table.primary_key_index]
-                trans.execute(self.table.update_row(id=id, values=list(row)))
+                trans.execute(self.table.update_row(pk=id, values=list(row)))
 
             results = trans.commit()
             results['new_rows_id_map'] = new_rows_id_map
