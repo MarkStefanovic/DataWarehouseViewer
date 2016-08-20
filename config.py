@@ -162,12 +162,12 @@ cfg = Config(
                 ),
                 ForeignKey(
                     name='ProductID',
-                    display_name='Products',
+                    display_name='Product',
                     dimension='dimProduct'
                 ),
                 ForeignKey(
                     name='CustomerID',
-                    display_name='Customers',
+                    display_name='Customer',
                     dimension='dimCustomer'
                 ),
                 Field(
