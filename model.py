@@ -205,11 +205,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.layoutChanged.emit()
         self.filters_changed_signal.emit()
 
-    def filter_set(self, col_ix, values):
+    def filter_set(self, col: int, values: set):
         self.visible_data = [
-            row for row in self.visible_data
-            if str(self.fk_lookup(col=col_ix, val=row[col_ix]))
-               in [y for y in values]
+            row for row in self.modified_data
+            if self.fk_lookup(col=col, val=row[col])
+               in values
         ]
         self.filters_changed_signal.emit()
 
