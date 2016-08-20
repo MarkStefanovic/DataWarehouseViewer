@@ -404,7 +404,7 @@ class DatasheetView(QtGui.QWidget):
             if itm.checkState() == QtCore.Qt.Checked
                and itm not in [show_all_item, none_item]
         )
-        self.model.filter_set(col_ix, checked_values)
+        self.model.filter_set(col=col_ix, values=checked_values)
 
     @QtCore.pyqtSlot()
     def open_comboboxes(self):
