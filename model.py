@@ -207,7 +207,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def filter_set(self, col: int, values: set):
         self.visible_data = [
-            row for row in self.modified_data
+            row for row in self.visible_data
             if self.fk_lookup(col=col, val=row[col])
                in values
         ]

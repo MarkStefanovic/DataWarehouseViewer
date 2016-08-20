@@ -270,7 +270,21 @@ class DatasheetView(QtGui.QWidget):
         add_item("Show All")
         add_item("None", QtCore.Qt.Unchecked)
         [add_item(itm) for itm in self.model.distinct_values(col_ix)]
-        self.list.itemChanged.connect(partial(self.on_list_selection_changed, col_ix=col_ix))
+        self.list.itemChanged.connect(
+            partial(
+                self.on_list_selection_changed
+                , col_ix=col_ix
+            )
+        )
+
+        menu.addSeparator()
+        menu.addAction(
+            "Apply Checkbox Filters"
+            , partial(
+                self.apply_filter_set
+                , col=col_ix
+            )
+        )
 
         menu.addSeparator()
         menu.addAction(
@@ -398,13 +412,15 @@ class DatasheetView(QtGui.QWidget):
                 remove_one()
         self.list.blockSignals(False)
 
-        checked_values = set(
+        self.filter_set = set(
             str(itm.text())
             for itm in all_items
             if itm.checkState() == QtCore.Qt.Checked
                and itm not in [show_all_item, none_item]
         )
-        self.model.filter_set(col=col_ix, values=checked_values)
+
+    def apply_filter_set(self, col: int):
+        self.model.filter_set(col=col, values=self.filter_set)
 
     @QtCore.pyqtSlot()
     def open_comboboxes(self):
