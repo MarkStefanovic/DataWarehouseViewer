@@ -1,13 +1,5 @@
-from itertools import chain
-
-from sortedcollections import ValueSortedDict
-from typing import (
-    Dict,
-    Optional,
-    List
-)
-
 from schema import (
+    Constellation,
     Dimension,
     Fact,
     Field,
@@ -16,9 +8,8 @@ from schema import (
     ForeignKey,
     Operator,
     SummaryField,
-    Table,
 )
-from utilities import immutable_property
+
 
 class App:
     def __init__(self, *,
@@ -36,54 +27,12 @@ class App:
         self.maximum_export_rows = maximum_export_rows
 
 
-class Config:
-    def __init__(self, *,
-        app: App,
-        dimensions: Optional[List[Dimension]],
-        facts: List[Fact]
-    ) -> None:
-
-        super(Config, self).__init__()
-
-        self.app = app
-        self.dimensions = dimensions
-        self.facts = facts
-        self._foreign_keys = {
-            tbl.table_name: {}
-            for tbl in dimensions
-        }  # type Dict[str, Dict[int, str]]
-
-    @immutable_property
-    def tables(self) -> List[Table]:
-        return chain(self.facts, self.dimensions)
-
-    @property
-    def foreign_key_lookups(self):
-        return {
-            tbl.table_name: tbl.foreign_key_schema
-            for tbl in self.dimensions
-        }
-
-    def foreign_keys(self, dim: str) -> Dict[int, str]:
-        if self._foreign_keys[dim]:
-            return self._foreign_keys[dim]
-        self.pull_foreign_keys(dim)
-        return self._foreign_keys[dim]
-
-    def pull_foreign_keys(self, dim: str) -> None:
-        from db import fetch
-        self._foreign_keys[dim] = ValueSortedDict({
-            row[0]: str(row[1])
-            for row in fetch(self.foreign_key_lookups[dim])
-        })
-
-
-cfg = Config(
+cfg = Constellation(
     app=App(
         display_name='SalesDW'
         , color_scheme='darkcity.css'
         , db_path='sqlite:///test.db'
-        , maximum_display_rows=1000
+        , maximum_display_rows=10000
         , maximum_export_rows=500000
     ),
     dimensions=[
@@ -114,7 +63,8 @@ cfg = Config(
             summary_field=SummaryField(
                 display_fields=['ProductName', 'ProductCategory'],
                 display_name='Product',
-                separator=' - '
+                separator=' - ',
+                filter_operators=[Operator.str_like]
             )
         )
         , Dimension(
@@ -144,7 +94,8 @@ cfg = Config(
             summary_field=SummaryField(
                 display_fields=['CustomerName'],
                 display_name='Customer',
-                separator=' - '
+                separator=' - ',
+                filter_operators=[Operator.str_like]
             )
         )
     ],
@@ -163,12 +114,14 @@ cfg = Config(
                 ForeignKey(
                     name='ProductID',
                     display_name='Product',
-                    dimension='dimProduct'
+                    dimension='dimProduct',
+                    foreign_key_field='ID'
                 ),
                 ForeignKey(
                     name='CustomerID',
                     display_name='Customer',
-                    dimension='dimCustomer'
+                    dimension='dimCustomer',
+                    foreign_key_field='ID'
                 ),
                 Field(
                     name='OrderDate',

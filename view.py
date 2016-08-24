@@ -67,7 +67,7 @@ class DatasheetView(QtGui.QWidget):
         self.layout.setColumnStretch(0, 1)  # query designer
         self.layout.setColumnStretch(1, 6)  # ds and summary
 
-        self.query_designer = QueryDesigner(filters=self.model.query_manager.table.filters)
+        self.query_designer = QueryDesigner(filters=self.model.query_manager.filters)
         self.layout.addWidget(self.query_designer, 0, 0, 1, 1, QtCore.Qt.AlignTop)
 
         ds_layout = QtGui.QGridLayout()
@@ -312,12 +312,6 @@ class DatasheetView(QtGui.QWidget):
             )
         )
 
-        menu.addSeparator()
-        menu.addAction(
-            "Reset filters"
-            , self.model.reset
-        )
-
         if self.model.query_manager.table.editable:
             menu.addSeparator()
             model_ix = self.model.index(row_ix, col_ix)
@@ -528,7 +522,7 @@ class QueryDesigner(QtGui.QWidget):
         self.query_controls = {}
         self.create_controls()
 
-    @log_error
+    # @log_error
     def add_row(self, filter: Filter) -> None:
         lbl = QtGui.QLabel(filter.display_name)
         txt = QtGui.QLineEdit()
@@ -546,7 +540,7 @@ class QueryDesigner(QtGui.QWidget):
     def add_criteria(self, filter_ix: int, value: str) -> None:
         self.add_criteria_signal.emit(filter_ix, value)
 
-    @log_error
+    # @log_error
     def create_controls(self) -> None:
         for f in self.filters[:10]:  # cap at 10 maximum filter input boxes
             self.add_row(f)

@@ -10,7 +10,7 @@ from db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema import Table
+from schema import Fact, Table
 from sqlalchemy import Table
 from utilities import immutable_property
 
@@ -27,14 +27,16 @@ class QueryManager(QtCore.QObject):
         self.exporter = QueryExporter()
         self.runner = QueryRunner()
         self.table = table
+        self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
+        self.filters = self.star.filters if self.star else self.table.filters
+        self.headers = [fld.display_name for fld in self.table.fields]
 
     #   Connect Signals
         self.runner.signals.results.connect(self.process_results)
 
-    @log_error
     def add_criteria(self, filter_ix: int, value: str) -> None:
         """Accept a string with a type and convert it into a where condition"""
-        self.table.filters[filter_ix].set_value(value)
+        self.filters[filter_ix].value = value
 
     @immutable_property
     def editable_fields_indices(self) -> List[int]:
@@ -56,16 +58,9 @@ class QueryManager(QtCore.QObject):
     def export(self) -> None:
         self.exporter.start_pull(query=self.sql_export, headers=self.headers)
 
-    @immutable_property
-    def headers(self) -> List[str]:
-        """Return a list of field headers for display."""
-        return [fld.display_name for fld in self.table.fields]
-
-    @log_error
     def pull(self) -> None:
         self.runner.run_sql(query=self.sql_display)
 
-    @log_error
     @QtCore.pyqtSlot(list)
     def process_results(self, results: list) -> None:
         """Convert data to specified data types"""
@@ -112,8 +107,12 @@ class QueryManager(QtCore.QObject):
 
     @property
     def sql_display(self) -> str:
+        if self.star:
+            return self.star.select(max_rows=cfg.app.maximum_display_rows)
         return self.table.select(max_rows=cfg.app.maximum_display_rows)
 
     @property
     def sql_export(self) -> str:
+        if self.star:
+            return self.star.select(max_rows=cfg.app.maximum_export_rows)
         return self.table.select(max_rows=cfg.app.maximum_export_rows)

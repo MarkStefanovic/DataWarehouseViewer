@@ -95,9 +95,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def field_totals(self, col_ix: int) -> list:
         totals = []
         fld = self.query_manager.table.fields[col_ix]
+        rows = self.rowCount()
         if fld.dtype == FieldType.float:
             total = sum(val[col_ix] for val in self.visible_data)
-            avg = total / self.rowCount() if self.rowCount() > 0 else 0
+            avg = total / rows if rows > 0 else 0
             totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
             totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
         elif fld.dtype == FieldType.date:
@@ -198,7 +199,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     return True
 
         self.visible_data = [
-            row for row in self.visible_data
+            row for row in self.modified_data
             if is_like(val, row, col_ix)
         ]
 
@@ -265,7 +266,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
         self.layoutChanged.emit()
 
-    def rowCount(self, index: QtCore.QModelIndex):
+    def rowCount(self, index: QtCore.QModelIndex=None):
         if self.visible_data:
             if len(self.visible_data) <= self.rows_loaded:
                 return len(self.visible_data)

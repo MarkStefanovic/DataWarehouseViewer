@@ -1,14 +1,13 @@
 """The classes declared in this module are used by multiple modules within the project.
 
-
-Table (Fact|Dimension) -> Filter -> Field + Operator
 """
 from datetime import datetime
 from enum import Enum, unique
 from functools import reduce
+from itertools import chain
 import re
-
-
+from sortedcollections import ValueSortedDict
+from sqlalchemy import select
 from typing import (
     Dict,
     List,
@@ -25,7 +24,9 @@ from sqlalchemy.sql.dml import (
     Insert,
     Update
 )
-from logger import log_error
+
+
+md = sqa.MetaData()
 
 
 class date(str):
@@ -53,9 +54,13 @@ class FieldType(Enum):
     str = str
     bool = bool  # TODO -- add checkbox controls on form too
 
-    @log_error
+    def __init__(self, data_type):
+        self.data_type = data_type
+
     def convert(self, value: str):
-        return self.value(value)
+        if value:
+            return self.data_type(value)
+        return ''
 
 
 @unique
@@ -154,14 +159,14 @@ class Filter:
     def __init__(self, *, field: Field, operator: Operator) -> None:
         self.field = field
         self.operator = operator
-        self.value = ''
+        self._value = None
 
     @immutable_property
     def display_name(self) -> str:
         suffix = self.operator.suffix
         return self.field.display_name + (" " + suffix if suffix else "")
 
-    @immutable_property
+    @property
     def filter(self) -> BinaryExpression:
         fld = self.field.schema
         operator_mapping = {
@@ -188,9 +193,17 @@ class Filter:
         if self.value:
             return operator_mapping[self.operator]
 
-    def set_value(self, value: str):
+    def __lt__(self, other):
+        return self.display_name < other.display_name
+
+    @property
+    def value(self):
+        return self.field.dtype.convert(self._value)
+
+    @value.setter
+    def value(self, value: str):
         """The slot that the associated filter control sends messages to."""
-        self.value = value
+        self._value = value
 
 
 @autorepr
@@ -211,12 +224,6 @@ class Table:
         self.fields = fields
         self.editable = editable
 
-        self.filters = [
-            Filter(field=fld, operator=op)
-            for fld in self.fields if fld.filter_operators
-            for op in fld.filter_operators
-        ]
-
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values
         """
@@ -228,6 +235,14 @@ class Table:
 
     def field(self, name) -> Field:
         return next(fld for fld in self.fields if fld.name == name)
+
+    @immutable_property
+    def filters(self):
+        return [
+            Filter(field=fld, operator=op)
+            for fld in self.fields if fld.filter_operators
+            for op in fld.filter_operators
+        ]
 
     @immutable_property
     def foreign_keys(self) -> Dict[int, Field]:
@@ -244,16 +259,9 @@ class Table:
     @immutable_property
     def schema(self):
         """Map table to a sqlalchemy table schema"""
-        md = sqa.MetaData()
+        # md = sqa.MetaData()
         cols = [fld.schema for fld in self.fields]
         return sqa.Table(self.table_name, md, *cols)
-
-    def select(self, max_rows: int=1000) -> Select:
-        s = self.schema.select()
-        for f in self.filters:
-            if f.value:
-                s = s.where(f.filter)
-        return s.limit(max_rows)
 
     def update_row(self, *, pk: int, values: List[str]) -> Update:
         """Statement to update a row on the table given the primary key value."""
@@ -273,14 +281,16 @@ class SummaryField(Field):
     def __init__(self, *,
         display_fields: Union[List[str], str],
         display_name: str,
-        separator: str=' '
+        separator: str=' ',
+        filter_operators: List[Operator]=None
     ) -> None:
 
-        field_def = "||'" + separator + "'||".join(display_fields)
+        # field_def = ("||'" + separator + "'||").join(display_fields)
         super(SummaryField, self).__init__(
-            name=field_def,
+            name="_".join(display_fields), #field_def,
             dtype=FieldType.str,
             display_name=display_name,
+            filter_operators=filter_operators,
             editable=False,
             primary_key=False
         )
@@ -317,15 +327,39 @@ class Dimension(Table):
         self.summary_field = summary_field
 
     @immutable_property
-    def foreign_key_schema(self):
-        display_fields = [
+    def display_field_schemas(self):
+        return [
             self.field(n).schema
             for n in self.summary_field.display_fields
         ]
+
+    @immutable_property
+    def foreign_key_schema(self):
         summary_field = reduce(
-            lambda x, y: x + self.summary_field.separator + y, display_fields
+            lambda x, y: x + self.summary_field.separator + y, self.display_field_schemas
             ).label(self.summary_field.display_name)
         return sqa.select([self.primary_key, summary_field])
+
+    def select(self, max_rows: int=1000) -> Select:
+        """Only the dimension has a select method on the table class since
+        the Fact table has to consider foreign keys so its select statement
+        is composed at the Star level"""
+        s = self.schema.select()
+        for f in (flt for flt in self.filters if flt.value):
+            s = s.where(f.filter)
+        return s.limit(max_rows)
+
+    @immutable_property
+    def summary_field_schema(self):
+        fld = Field(
+            name=self.summary_field.display_name,
+            display_name=self.summary_field.display_name,
+            dtype=FieldType.str
+        )
+        fld.schema = reduce(
+            lambda x, y: x + self.summary_field.separator + y, self.display_field_schemas
+            ).label(self.summary_field.display_name)
+        return fld
 
 
 @autorepr
@@ -333,25 +367,27 @@ class ForeignKey(Field):
     def __init__(self, *,
         name: str,
         display_name: str,
-        dimension: str
+        dimension: str,
+        foreign_key_field: str
     ):
         super(ForeignKey, self).__init__(
             name=name,
             dtype=FieldType.int,
             display_name=display_name,
+            filter_operators=None,
             editable=False,
             primary_key=True
         )
 
         self.dimension = dimension
+        self.foreign_key_field = foreign_key_field # name of id field on dim
 
     @immutable_property
     def schema(self):
-        """Map the field to a sqlalchemy Column"""
         return sqa.Column(
             self.name,
             None,
-            sqa.ForeignKey("{t}.{f}".format(t=self.dimension, f=self.name))
+            sqa.ForeignKey("{t}.{f}".format(t=self.dimension, f=self.foreign_key_field))
         )
 
 
@@ -378,9 +414,106 @@ class Fact(Table):
             editable=editable
         )
 
+        self.dimensions = [
+            fld.dimension
+            for fld in self.foreign_keys.values()
+        ]
+
+
+@autorepr
+class Star:
+    def __init__(self, fact: Fact, dimensions: List[Dimension]):
+        self.fact = fact
+        self._dimensions = dimensions
+
     @immutable_property
     def dimensions(self):
-        return [fld.dimension for fld in self.foreign_keys.values()]
+        return [
+            dim for dim in self._dimensions
+            if dim.table_name in [
+                fld.dimension for fld in self.fact.fields
+                if isinstance(fld, ForeignKey)
+            ]
+        ]
+
+    @immutable_property
+    def filters(self) -> List[Filter]:
+        star_filters = []
+        for dim in self.dimensions:
+            for op in dim.summary_field.filter_operators:
+                fk_filter = Filter(
+                    field=dim.summary_field_schema,
+                    operator=op
+                )
+                star_filters.append(fk_filter)
+        for f in (flt for flt in self.fact.filters):
+            star_filters.append(f)
+        return sorted(star_filters)
+
+    def select(self, max_rows: int = 1000) -> Select:
+        """Override the Fact tables select method implementation to
+        account for foreign key filters."""
+        fact = self.fact.schema
+        star = fact
+        for dim in self.dimensions:
+            star = star.join(dim.schema)
+        qry = select(fact.columns).select_from(star)
+        for f in [flt for flt in self.filters if flt.value]:
+            qry = qry.where(f.filter)
+        return qry.limit(max_rows)
+
+
+class Constellation:
+    def __init__(self, *,
+            app,
+            dimensions: Optional[List[Dimension]],
+            facts: List[Fact]
+    ) -> None:
+        super(Constellation, self).__init__()
+
+        self.app = app
+        self.dimensions = dimensions
+        self.facts = facts
+        self._foreign_keys = {
+            tbl.table_name: {}
+            for tbl in dimensions
+        }  # type: Dict[str, Dict[int, str]]
+
+    @immutable_property
+    def stars(self) -> List[Star]:
+        return {
+            fact.table_name: Star(fact=fact, dimensions=self.dimensions)
+            for fact in self.facts
+        }
+
+    @immutable_property
+    def tables(self):
+        return chain(self.facts, self.dimensions)
+
+    @property
+    def foreign_key_lookups(self):
+        return {
+            tbl.table_name: tbl.foreign_key_schema
+            for tbl in self.dimensions
+        }
+
+    def foreign_keys(self, dim: str) -> Dict[int, str]:
+        if self._foreign_keys[dim]:
+            return self._foreign_keys[dim]
+        self.pull_foreign_keys(dim)
+        return self._foreign_keys[dim]
+
+    def pull_foreign_keys(self, dim: str) -> None:
+        from db import fetch
+        self._foreign_keys[dim] = ValueSortedDict({
+            row[0]: str(row[1])
+            for row in fetch(self.foreign_key_lookups[dim])
+        })
+
+    def star(self, fact_table: str) -> Star:
+        """Return the specific star localized on a specific Star"""
+        return self.stars[fact_table]
+
 
 # if __name__ == '__main__':
 #     import doctest

@@ -1,11 +1,6 @@
 """This app displays data from a database in a way that is easy to filter and export.
-
-FLOW OF INFORMATION
-View (Input) -> Model -> Query Manager -> Exporter|Runner -> Data -> Query Manager -> Model -> View (Display):
-
-No shortcuts are taken.
 """
-from enum import Enum
+
 import os
 import sys
 

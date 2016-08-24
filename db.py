@@ -52,6 +52,8 @@ class Transaction:
 def execute(cmd) -> int:
     con = engine.connect()
     try:
+        # from sqlalchemy.dialects import sqlite
+        # print(cmd.compile(dialect=sqlite.dialect()))
         result = con.execute(cmd)
         if type(cmd) == Delete:
             return 0
@@ -70,6 +72,9 @@ def execute(cmd) -> int:
 def fetch(qry: str) -> List[str]:
     con = engine.connect()
     try:
+        from sqlalchemy.dialects import sqlite
+        print(qry.compile(dialect=sqlite.dialect(),
+            compile_kwargs={"literal_binds": True}))
         return con.execute(qry).fetchall()
     except:
         raise
