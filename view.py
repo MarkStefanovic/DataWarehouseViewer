@@ -50,7 +50,7 @@ class DatasheetView(QtGui.QWidget):
     #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
         self.btn_reset = QtGui.QPushButton('&Reset Filters')
-        self.txt_search = QtGui.QLineEdit()
+        # self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
         self.add_foreign_key_comboboxes()
 
@@ -73,8 +73,8 @@ class DatasheetView(QtGui.QWidget):
         ds_layout = QtGui.QGridLayout()
         ds_layout.setColumnStretch(2, 4)
         ds_layout.addWidget(self.btn_reset, 0, 0, 1, 1)
-        ds_layout.addWidget(self.lbl_search, 0, 1, 1, 1)
-        ds_layout.addWidget(self.txt_search, 0, 2, 1, 1)
+        # ds_layout.addWidget(self.lbl_search, 0, 1, 1, 1)
+        # ds_layout.addWidget(self.txt_search, 0, 2, 1, 1)
         ds_layout.addWidget(self.table, 1, 0, 1, 3)
         self.layout.addLayout(ds_layout, 0, 1, 1, 1, QtCore.Qt.AlignTop)
 
@@ -101,7 +101,7 @@ class DatasheetView(QtGui.QWidget):
         self.model.query_manager.runner.signals.error.connect(self.outside_error)
         self.model.query_manager.exporter.signals.error.connect(self.outside_error)
 
-        self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
+        # self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
         self.btn_reset.clicked.connect(self.reset)
         self.btn_save.clicked.connect(self.save)
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
@@ -141,7 +141,7 @@ class DatasheetView(QtGui.QWidget):
 
     def export_visible(self) -> None:
         self.to_excel(
-            data=self.model.modified_data,
+            data=self.model.visible_data,
             header=self.model.query_manager.headers
         )
 
@@ -192,12 +192,12 @@ class DatasheetView(QtGui.QWidget):
 
     def reset(self):
         self.table.resizeColumnsToContents()
-        self.txt_search.setText('')
+        # self.txt_search.setText('')
         self.model.reset()
 
-    @QtCore.pyqtSlot(str)
-    def on_lineEdit_textChanged(self, text):
-        self.model.filter_like(self.txt_search.text())
+    # @QtCore.pyqtSlot(str)
+    # def on_lineEdit_textChanged(self, text):
+    #     self.model.filter_like(self.txt_search.text())
 
     def copy(self):
         """Copy selected cells into copy-buffer"""
@@ -240,7 +240,7 @@ class DatasheetView(QtGui.QWidget):
     def make_cell_context_menu(self, menu, row_ix, col_ix):
         """Create the mneu displayed when right-clicking on a cell."""
         try:
-            val = self.model.modified_data[row_ix][col_ix]
+            val = self.model.visible_data[row_ix][col_ix]
         except IndexError:
             val = ""
 
@@ -453,7 +453,7 @@ class DatasheetView(QtGui.QWidget):
         Popen(dest, shell=True)
 
     def reset_query(self):
-        self.txt_search.setText('')
+        # self.txt_search.setText('')
         self.model.query_manager.reset()
         self.model.full_reset()
         self.set_status("")

@@ -145,7 +145,7 @@ cfg = Constellation(
                     name='SalesAmount',
                     dtype=FieldType.float,
                     display_name='Sales Amount',
-                    field_format=FieldFormat.currency,
+                    field_format=FieldFormat.accounting,
                     filter_operators=[
                         Operator.number_equals
                     ]

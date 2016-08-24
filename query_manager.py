@@ -77,7 +77,7 @@ class QueryManager(QtCore.QObject):
 
     def reset(self) -> None:
         for f in self.table.filters:
-            f.set_value(value='')
+            f.value = ''
 
     @log_error
     def save_changes(self, changes: Dict[str, List[tuple]]) -> Dict[str, int]:

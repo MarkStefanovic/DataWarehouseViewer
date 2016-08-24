@@ -114,7 +114,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
         return len(self.query_manager.table.fields)
 
-    @log_error
     def data(self, index: QtCore.QModelIndex, role: int=QtCore.Qt.DisplayRole):
         alignment = {
             FieldType.date: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
@@ -168,7 +167,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             row for row in self.visible_data
             if lkp(row[col_ix]) >= lkp(val)
         ]
-        # self.sort(col=col_ix, order=QtCore.Qt.AscendingOrder)
+        self.sort(col=col_ix, order=QtCore.Qt.AscendingOrder)
         self.filters_changed_signal.emit()
 
     def filter_less_than(self, col_ix, val):
@@ -177,7 +176,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             row for row in self.visible_data
             if lkp(row[col_ix]) <= lkp(val)
         ]
-        # self.sort(col=col_ix, order=QtCore.Qt.DescendingOrder)
+        self.sort(col=col_ix, order=QtCore.Qt.DescendingOrder)
         self.filters_changed_signal.emit()
 
     def filter_like(self, val, col_ix=None):

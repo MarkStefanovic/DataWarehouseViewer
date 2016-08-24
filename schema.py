@@ -92,11 +92,12 @@ class Operator(Enum):
 
 @unique
 class FieldFormat(Enum):
-    currency = '${: ,.2f}'  # add commas, pad a space for negatives, 2 decimals
+    accounting = '{: ,.2f} '  # 2 decimal places, comma, pad for negatives, pad 1 right
+    currency = '${: ,.2f} '  # 2 decimals, add commas, pad for negatives, pad 1 right
     date = '{:%Y-%m-%d}'
     datetime = '{:%Y-%m-%d %H:%M}'
     float = '{:,.4f}'  # show 4 decimal places
-    int = '{: d}' # pad a space for negative numbers
+    int = '{: d}'  # pad a space for negative numbers
     str = '{:s}'  # cut off at 40 characters for display
 
 
@@ -125,7 +126,7 @@ class Field:
         defaults = {
             FieldType.date: FieldFormat.date,
             FieldType.int: FieldFormat.int,
-            FieldType.float: FieldFormat.currency,
+            FieldType.float: FieldFormat.accounting,
             FieldType.str: FieldFormat.str
         }
         return defaults[self.dtype]
@@ -414,7 +415,9 @@ class Fact(Table):
             editable=editable
         )
 
-        self.dimensions = [
+    @property
+    def dimensions(self):
+        return [
             fld.dimension
             for fld in self.foreign_keys.values()
         ]
