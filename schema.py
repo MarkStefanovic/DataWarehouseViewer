@@ -12,7 +12,6 @@ from typing import (
     Dict,
     List,
     Optional,
-    Union,
     Iterable
 )
 
@@ -25,14 +24,22 @@ from sqlalchemy.sql.dml import (
     Update
 )
 
-from custom_types import PrimaryKeyIndex, SqlDataType
+from custom_types import (
+    ColumnIndex,
+    DateString,
+    DimensionName,
+    FactName,
+    ForeignKeyValue,
+    PrimaryKeyIndex,
+    SqlDataType
+)
 from utilities import autorepr, static_property
 
 md = sqa.MetaData()
 
 
 class date(str):
-    def __new__(cls, content) -> str:
+    def __new__(cls, content) -> DateString:
         if not content:
             return super().__new__(cls, '')
         if isinstance(content, str):
@@ -42,7 +49,7 @@ class date(str):
         return str(content)[:10]
 
     @staticmethod
-    def convert_to_datetime(val: str) -> datetime.date:
+    def convert_to_datetime(val: DateString) -> datetime.date:
         if re.match(r"^\d{4}-\d{2}-\d{2}.*$", val):
             return datetime.strptime(val[:10], "%Y-%m-%d").date()
         raise ValueError("{v} is not a valid date".format(v=val))
@@ -56,7 +63,7 @@ class FieldType(Enum):
     str = str
     bool = bool  # TODO -- add checkbox controls on form too
 
-    def __init__(self, data_type):
+    def __init__(self, data_type) -> None:
         self.data_type = data_type
 
     def convert(self, value: SqlDataType) -> SqlDataType:
@@ -248,8 +255,8 @@ class Table:
         ]
 
     @static_property
-    def foreign_keys(self) -> Dict[int, Field]:
-        return {i: fld for i, fld in enumerate(self.fields) if isinstance(fld, ForeignKey)}
+    def foreign_keys(self) -> Dict[ColumnIndex, Field]:
+        return {ColumnIndex(i): fld for i, fld in enumerate(self.fields) if isinstance(fld, ForeignKey)}
 
     @static_property
     def primary_key(self) -> Field:
@@ -262,11 +269,10 @@ class Table:
     @static_property
     def schema(self) -> sqa.Table:
         """Map table to a sqlalchemy table schema"""
-        # md = sqa.MetaData()
         cols = [fld.schema for fld in self.fields]
         return sqa.Table(self.table_name, md, *cols)
 
-    def update_row(self, *, pk: int, values: List[str]) -> Update:
+    def update_row(self, *, pk: PrimaryKeyIndex, values: List[SqlDataType]) -> Update:
         """Statement to update a row on the table given the primary key value."""
         for i, v in enumerate(values):
             if self.fields[i].dtype == FieldType.date:
@@ -282,10 +288,10 @@ class SummaryField(Field):
     their integer primary key.
     """
     def __init__(self, *,
-        display_fields: Union[List[str], str],
+        display_fields: List[str],
         display_name: str,
         separator: str=' ',
-        filter_operators: List[Operator]=None
+        filter_operators: Optional[List[Operator]]=None
     ) -> None:
 
         super(SummaryField, self).__init__(
@@ -312,7 +318,7 @@ class Dimension(Table):
     up on the associated Fact table.
     """
     def __init__(self, *,
-        table_name: str,
+        table_name: DimensionName,
         display_name: str,
         fields: List[Field],
         summary_field: SummaryField,
@@ -369,7 +375,7 @@ class ForeignKey(Field):
     def __init__(self, *,
         name: str,
         display_name: str,
-        dimension: str,
+        dimension: DimensionName,
         foreign_key_field: str
     ) -> None:
 
@@ -404,7 +410,7 @@ class Fact(Table):
     don't warrant a seperate table to store them.
     """
     def __init__(self, *,
-        table_name: str,
+        table_name: FactName,
         display_name: str,
         fields: List[Field],
         editable: bool=False
@@ -418,7 +424,7 @@ class Fact(Table):
         )
 
     @property
-    def dimensions(self) -> List[str]:
+    def dimensions(self) -> List[DimensionName]:
         """List of the associated dimension names"""
         return [
             fld.dimension
@@ -486,7 +492,7 @@ class Constellation:
         }  # type: Dict[str, Dict[int, str]]
 
     @static_property
-    def stars(self) -> Dict[str, Star]:
+    def stars(self) -> Dict[FactName, Star]:
         return {
             fact.table_name: Star(fact=fact, dimensions=self.dimensions)
             for fact in self.facts
@@ -497,19 +503,19 @@ class Constellation:
         return chain(self.facts, self.dimensions)
 
     @property
-    def foreign_key_lookups(self) -> Dict[str, Select]:
+    def foreign_key_lookups(self) -> Dict[DimensionName, Select]:
         return {
             tbl.table_name: tbl.foreign_key_schema
             for tbl in self.dimensions
         }
 
-    def foreign_keys(self, dim: str) -> Dict[int, str]:
+    def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue, SqlDataType]:
         if self._foreign_keys[dim]:
             return self._foreign_keys[dim]
         self.pull_foreign_keys(dim)
         return self._foreign_keys[dim]
 
-    def pull_foreign_keys(self, dim: str) -> None:
+    def pull_foreign_keys(self, dim: DimensionName) -> None:
         select_statement = self.foreign_key_lookups[dim]  # type: Select
         from db import fetch
         self._foreign_keys[dim] = ValueSortedDict({
@@ -517,8 +523,8 @@ class Constellation:
             for row in fetch(select_statement)
         })
 
-    def star(self, fact_table: str) -> Star:
-        """Return the specific star localized on a specific Star"""
+    def star(self, fact_table: FactName) -> Star:
+        """Return the specific Star system localized on a specific Fact table"""
         return self.stars[fact_table]
 
 
