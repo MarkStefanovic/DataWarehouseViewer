@@ -1,4 +1,4 @@
-
+from sqlalchemy.sql import Select
 from typing import Generator, List
 
 from sqlalchemy import create_engine
@@ -69,12 +69,11 @@ def execute(cmd) -> int:
 
 
 @log_error
-def fetch(qry: str) -> List[str]:
+def fetch(qry: Select) -> List[str]:
     con = engine.connect()
     try:
         from sqlalchemy.dialects import sqlite
-        print(qry.compile(dialect=sqlite.dialect(),
-            compile_kwargs={"literal_binds": True}))
+        print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
         return con.execute(qry).fetchall()
     except:
         raise

@@ -2,19 +2,20 @@ from copy import deepcopy
 import operator
 from functools import partial
 import uuid
+from typing import (
+    Any,
+    Dict,
+    List,
+    Union,
+    Optional, Tuple, Set)
 
-from sortedcollections import ValueSortedDict
-from typing import Any, Dict
-
-from PyQt4 import QtCore, QtGui
+from PyQt4 import QtCore
 from sortedcontainers import SortedSet
 
 from config import cfg
-from db import fetch
-from logger import log_error
+from custom_types import ColumnIndex, SqlDataType
 from query_manager import QueryManager
 from schema import FieldType, Table
-from utilities import immutable_property
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
@@ -92,7 +93,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.rows_loaded += rows_to_fetch
         self.endInsertRows()
 
-    def field_totals(self, col_ix: int) -> list:
+    def field_totals(self, col_ix: ColumnIndex) -> list:
         totals = []
         fld = self.query_manager.table.fields[col_ix]
         rows = self.rowCount()
@@ -148,20 +149,20 @@ class AbstractModel(QtCore.QAbstractTableModel):
         del self.modified_data[mod_row]
         self.dataChanged.emit(ix, ix)
 
-    def distinct_values(self, col_ix):
+    def distinct_values(self, col_ix: ColumnIndex) -> List[str]:
         return SortedSet(
             str(self.fk_lookup(col=col_ix, val=row[col_ix]))
             for row in self.visible_data
         )
 
-    def filter_equality(self, col_ix, val):
+    def filter_equality(self, col_ix: ColumnIndex, val: SqlDataType) -> None:
         self.visible_data = [
             row for row in self.visible_data
             if row[col_ix] == val
         ]
         self.filters_changed_signal.emit()
 
-    def filter_greater_than(self, col_ix, val):
+    def filter_greater_than(self, col_ix, val) -> None:
         lkp = partial(self.fk_lookup, col=col_ix)
         self.visible_data = [
             row for row in self.visible_data
@@ -170,7 +171,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.sort(col=col_ix, order=QtCore.Qt.AscendingOrder)
         self.filters_changed_signal.emit()
 
-    def filter_less_than(self, col_ix, val):
+    def filter_less_than(self, col_ix, val) -> None:
         lkp = partial(self.fk_lookup, col=col_ix)
         self.visible_data = [
             row for row in self.visible_data
@@ -179,14 +180,14 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.sort(col=col_ix, order=QtCore.Qt.DescendingOrder)
         self.filters_changed_signal.emit()
 
-    def filter_like(self, val, col_ix=None):
+    def filter_like(self, val: str, col_ix: Optional[ColumnIndex]=None) -> None:
         self.layoutAboutToBeChanged.emit()
         lkp = partial(self.fk_lookup, col=col_ix)
 
-        def normalize(val):
-            return str(val).lower()
+        def normalize(value: str) -> str:
+            return str(value).lower()
 
-        def is_like(input_val, row, col):
+        def is_like(input_val: str, row: Tuple[SqlDataType], col: int) -> bool:
             if col:
                 if normalize(input_val) in normalize(lkp(row[col])):
                     return True
@@ -196,6 +197,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     for c, v in enumerate(row)
                 ]):
                     return True
+            return False
 
         self.visible_data = [
             row for row in self.modified_data
@@ -205,11 +207,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.layoutChanged.emit()
         self.filters_changed_signal.emit()
 
-    def filter_set(self, col: int, values: set):
+    def filter_set(self, col: int, values: Set[str]) -> None:
         self.visible_data = [
             row for row in self.visible_data
-            if self.fk_lookup(col=col, val=row[col])
-               in values
+            if self.fk_lookup(col=col, val=row[col]) in values
         ]
         self.filters_changed_signal.emit()
 
@@ -222,19 +223,19 @@ class AbstractModel(QtCore.QAbstractTableModel):
             )
         return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
 
-    def fk_lookup(self, val, col):
+    def fk_lookup(self, val, col) -> SqlDataType:
         if col in self.query_manager.table.foreign_keys.keys():
             return self.foreign_keys[col][val]
         return val
 
     @property
-    def foreign_keys(self) -> Dict[int, Dict[int, str]]:
+    def foreign_keys(self) -> Dict[ColumnIndex, Dict[int, str]]:
         return {
-            k: cfg.foreign_keys(v.dimension)
+            ColumnIndex(k): cfg.foreign_keys(v.dimension)
             for k, v in self.query_manager.table.foreign_keys.items()
         }
 
-    def full_reset(self):
+    def full_reset(self) -> None:
         self.layoutAboutToBeChanged.emit()
         self.original_data = []
         self.modified_data = []
@@ -242,11 +243,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.layoutChanged.emit()
         self.filters_changed_signal.emit()
 
-    def headerData(self, col, orientation, role):
+    def headerData(self, col: ColumnIndex, orientation: int, role: QtCore.Qt.DisplayRole) -> List[str]:
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
             return self.query_manager.headers[col]
 
-    def pull(self):
+    def pull(self) -> None:
         self.rows_loaded = self.rows_per_page
         self.query_manager.pull()
 
@@ -255,24 +256,24 @@ class AbstractModel(QtCore.QAbstractTableModel):
         return row[self.query_manager.table.primary_key_index]
 
     @QtCore.pyqtSlot(str)
-    def query_errored(self, msg):
+    def query_errored(self, msg) -> None:
         self.error_signal.emit(msg)
 
-    def reset(self):
+    def reset(self) -> None:
         """reset filters - not pending changes"""
         self.layoutAboutToBeChanged.emit()
         self.visible_data = self.modified_data
         self.filters_changed_signal.emit()
         self.layoutChanged.emit()
 
-    def rowCount(self, index: QtCore.QModelIndex=None):
+    def rowCount(self, index: Optional[QtCore.QModelIndex]=None) -> int:
         if self.visible_data:
             if len(self.visible_data) <= self.rows_loaded:
                 return len(self.visible_data)
             return self.rows_loaded
         return 0
 
-    def save(self) -> Dict[str, int]:
+    def save(self) -> Optional[Dict[str, int]]:
         chg = self.changes
         if chg['added'] or chg['deleted'] or chg['updated']:
             try:
@@ -298,19 +299,22 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 raise
         # else no changes to save, view displays 'no changes' when this function returns None
 
-    def setData(self, ix: QtCore.QModelIndex, value: Any, role: int=QtCore.Qt.EditRole) -> bool:
-        pk = self.visible_data[ix.row()][self.query_manager.table.primary_key_index]
-        row = next(
-            i for i, row
-            in enumerate(self.modified_data)
-            if row[self.query_manager.table.primary_key_index] == pk
-        )
-        self.visible_data[ix.row()][ix.column()] = value
-        self.modified_data[row][ix.column()] = value
-        self.dataChanged.emit(ix, ix)
-        return True
+    def setData(self, ix: QtCore.QModelIndex, value: SqlDataType, role: int=QtCore.Qt.EditRole) -> bool:
+        try:
+            pk = self.visible_data[ix.row()][self.query_manager.table.primary_key_index]
+            row = next(
+                i for i, row
+                in enumerate(self.modified_data)
+                if row[self.query_manager.table.primary_key_index] == pk
+            )
+            self.visible_data[ix.row()][ix.column()] = value
+            self.modified_data[row][ix.column()] = value
+            self.dataChanged.emit(ix, ix)
+            return True
+        except:
+            return False
 
-    def sort(self, col, order):
+    def sort(self, col: ColumnIndex, order: int) -> None:
         """sort table by given column number col"""
         try:
             self.layoutAboutToBeChanged.emit()
@@ -338,7 +342,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.layoutChanged.emit()
 
     @QtCore.pyqtSlot(list)
-    def update_view(self, results):
+    def update_view(self, results) -> None:
         self.layoutAboutToBeChanged.emit()
         self.original_data = results
         self.visible_data = deepcopy(results)

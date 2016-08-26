@@ -107,7 +107,7 @@ def files_in_folder(folder: str, prefix: str=None) -> list:
     return sorted([os.path.abspath(fp) for fp in os.listdir(folder)])
 
 
-class immutable_property:
+class static_property:
     """A method decorator to lazily evaluate a property value.
 
     This decorator should only be used to represent immutable data, as
@@ -123,7 +123,7 @@ class immutable_property:
     ...     def calc_return_value(self):
     ...         print('generating', self.val)
     ...
-    ...     @immutable_property
+    ...     @static_property
     ...     def a(self):
     ...         self.calc_return_value()
     ...         return self.val

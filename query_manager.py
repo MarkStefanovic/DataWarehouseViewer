@@ -1,6 +1,7 @@
 """This module is responsible for procuring data for the model to prep and send to view.
 
 """
+from sqlalchemy.sql import Select
 from typing import Dict, List, Tuple
 
 from PyQt4 import QtCore
@@ -12,7 +13,7 @@ from logger import log_error
 from query_runner import QueryRunner
 from schema import Fact, Table
 from sqlalchemy import Table
-from utilities import immutable_property
+from utilities import static_property
 
 
 class QueryManager(QtCore.QObject):
@@ -38,7 +39,7 @@ class QueryManager(QtCore.QObject):
         """Accept a string with a type and convert it into a where condition"""
         self.filters[filter_ix].value = value
 
-    @immutable_property
+    @static_property
     def editable_fields_indices(self) -> List[int]:
         if self.table.editable:
             return [
@@ -106,13 +107,13 @@ class QueryManager(QtCore.QObject):
             raise
 
     @property
-    def sql_display(self) -> str:
+    def sql_display(self) -> Select:
         if self.star:
             return self.star.select(max_rows=cfg.app.maximum_display_rows)
         return self.table.select(max_rows=cfg.app.maximum_display_rows)
 
     @property
-    def sql_export(self) -> str:
+    def sql_export(self) -> Select:
         if self.star:
             return self.star.select(max_rows=cfg.app.maximum_export_rows)
         return self.table.select(max_rows=cfg.app.maximum_export_rows)

@@ -1,7 +1,7 @@
 """The classes declared in this module are used by multiple modules within the project.
 
 """
-from datetime import datetime
+import datetime
 from enum import Enum, unique
 from functools import reduce
 from itertools import chain
@@ -12,9 +12,9 @@ from typing import (
     Dict,
     List,
     Optional,
-    Union
+    Union,
+    Iterable
 )
-from utilities import autorepr, immutable_property
 
 import sqlalchemy as sqa
 from sqlalchemy.sql import Select
@@ -25,6 +25,8 @@ from sqlalchemy.sql.dml import (
     Update
 )
 
+from custom_types import PrimaryKeyIndex, SqlDataType
+from utilities import autorepr, static_property
 
 md = sqa.MetaData()
 
@@ -40,7 +42,7 @@ class date(str):
         return str(content)[:10]
 
     @staticmethod
-    def convert_to_datetime(val):
+    def convert_to_datetime(val: str) -> datetime.date:
         if re.match(r"^\d{4}-\d{2}-\d{2}.*$", val):
             return datetime.strptime(val[:10], "%Y-%m-%d").date()
         raise ValueError("{v} is not a valid date".format(v=val))
@@ -57,7 +59,7 @@ class FieldType(Enum):
     def __init__(self, data_type):
         self.data_type = data_type
 
-    def convert(self, value: str):
+    def convert(self, value: SqlDataType) -> SqlDataType:
         if value:
             return self.data_type(value)
         return ''
@@ -121,7 +123,7 @@ class Field:
         self.primary_key = primary_key
         self.filter_operators = filter_operators
 
-    @immutable_property
+    @static_property
     def default_format(self) -> FieldFormat:
         defaults = {
             FieldType.date: FieldFormat.date,
@@ -131,15 +133,15 @@ class Field:
         }
         return defaults[self.dtype]
 
-    def format_value(self, value):
+    def format_value(self, value: SqlDataType) -> SqlDataType:
         try:
             val = self.dtype.convert(value)
             return self.field_format.value.format(val)
         except:
             return value
 
-    @immutable_property
-    def schema(self):
+    @static_property
+    def schema(self) -> sqa.Column:
         """Map the field to a sqlalchemy Column"""
         type_map = {
             FieldType.date: sqa.Date,
@@ -160,9 +162,9 @@ class Filter:
     def __init__(self, *, field: Field, operator: Operator) -> None:
         self.field = field
         self.operator = operator
-        self._value = None
+        self._value = None  # type: Optional[SqlDataType]
 
-    @immutable_property
+    @static_property
     def display_name(self) -> str:
         suffix = self.operator.suffix
         return self.field.display_name + (" " + suffix if suffix else "")
@@ -194,15 +196,15 @@ class Filter:
         if self.value:
             return operator_mapping[self.operator]
 
-    def __lt__(self, other):
+    def __lt__(self, other) -> bool:
         return self.display_name < other.display_name
 
     @property
-    def value(self):
+    def value(self) -> SqlDataType:
         return self.field.dtype.convert(self._value)
 
     @value.setter
-    def value(self, value: str):
+    def value(self, value: str) -> None:
         """The slot that the associated filter control sends messages to."""
         self._value = value
 
@@ -226,39 +228,39 @@ class Table:
         self.editable = editable
 
     def add_row(self, values: List[str]) -> Insert:
-        """Statement to add a row to the table given a list of values
-        """
+        """Statement to add a row to the table given a list of values"""
         return self.schema.insert()
 
     def delete_row(self, id: int) -> Delete:
         """Statement to delete a row from the table given the primary key value."""
         return self.schema.delete().where(self.primary_key == id)
 
-    def field(self, name) -> Field:
+    def field(self, name: str) -> Field:
+        """Look up a field based on it's name on the table."""
         return next(fld for fld in self.fields if fld.name == name)
 
-    @immutable_property
-    def filters(self):
+    @static_property
+    def filters(self) -> List[Filter]:
         return [
             Filter(field=fld, operator=op)
             for fld in self.fields if fld.filter_operators
             for op in fld.filter_operators
         ]
 
-    @immutable_property
+    @static_property
     def foreign_keys(self) -> Dict[int, Field]:
         return {i: fld for i, fld in enumerate(self.fields) if isinstance(fld, ForeignKey)}
 
-    @immutable_property
+    @static_property
     def primary_key(self) -> Field:
         return next(c for c in self.schema.columns if c.primary_key == True)
 
-    @immutable_property
-    def primary_key_index(self) -> int:
-        return next(i for i, c in enumerate(self.schema.columns) if c.primary_key == True)
+    @static_property
+    def primary_key_index(self) -> PrimaryKeyIndex:
+        return PrimaryKeyIndex(next(i for i, c in enumerate(self.schema.columns) if c.primary_key))
 
-    @immutable_property
-    def schema(self):
+    @static_property
+    def schema(self) -> sqa.Table:
         """Map table to a sqlalchemy table schema"""
         # md = sqa.MetaData()
         cols = [fld.schema for fld in self.fields]
@@ -286,9 +288,8 @@ class SummaryField(Field):
         filter_operators: List[Operator]=None
     ) -> None:
 
-        # field_def = ("||'" + separator + "'||").join(display_fields)
         super(SummaryField, self).__init__(
-            name="_".join(display_fields), #field_def,
+            name="_".join(display_fields),
             dtype=FieldType.str,
             display_name=display_name,
             filter_operators=filter_operators,
@@ -327,15 +328,15 @@ class Dimension(Table):
 
         self.summary_field = summary_field
 
-    @immutable_property
-    def display_field_schemas(self):
+    @static_property
+    def display_field_schemas(self) -> List[sqa.Column]:
         return [
             self.field(n).schema
             for n in self.summary_field.display_fields
         ]
 
-    @immutable_property
-    def foreign_key_schema(self):
+    @static_property
+    def foreign_key_schema(self) -> Table:
         summary_field = reduce(
             lambda x, y: x + self.summary_field.separator + y, self.display_field_schemas
             ).label(self.summary_field.display_name)
@@ -350,16 +351,16 @@ class Dimension(Table):
             s = s.where(f.filter)
         return s.limit(max_rows)
 
-    @immutable_property
-    def summary_field_schema(self):
+    @static_property
+    def summary_field_schema(self) -> List[sqa.Column]:
         fld = Field(
             name=self.summary_field.display_name,
             display_name=self.summary_field.display_name,
             dtype=FieldType.str
         )
         fld.schema = reduce(
-            lambda x, y: x + self.summary_field.separator + y, self.display_field_schemas
-            ).label(self.summary_field.display_name)
+            lambda x, y: x + self.summary_field.separator + y,
+                self.display_field_schemas).label(self.summary_field.display_name)
         return fld
 
 
@@ -370,7 +371,8 @@ class ForeignKey(Field):
         display_name: str,
         dimension: str,
         foreign_key_field: str
-    ):
+    ) -> None:
+
         super(ForeignKey, self).__init__(
             name=name,
             dtype=FieldType.int,
@@ -383,8 +385,8 @@ class ForeignKey(Field):
         self.dimension = dimension
         self.foreign_key_field = foreign_key_field # name of id field on dim
 
-    @immutable_property
-    def schema(self):
+    @static_property
+    def schema(self) -> sqa.Column:
         return sqa.Column(
             self.name,
             None,
@@ -416,7 +418,8 @@ class Fact(Table):
         )
 
     @property
-    def dimensions(self):
+    def dimensions(self) -> List[str]:
+        """List of the associated dimension names"""
         return [
             fld.dimension
             for fld in self.foreign_keys.values()
@@ -425,12 +428,12 @@ class Fact(Table):
 
 @autorepr
 class Star:
-    def __init__(self, fact: Fact, dimensions: List[Dimension]):
+    def __init__(self, fact: Fact, dimensions: List[Dimension]) -> None:
         self.fact = fact
         self._dimensions = dimensions
 
-    @immutable_property
-    def dimensions(self):
+    @static_property
+    def dimensions(self) -> List[Dimension]:
         return [
             dim for dim in self._dimensions
             if dim.table_name in [
@@ -439,9 +442,9 @@ class Star:
             ]
         ]
 
-    @immutable_property
+    @static_property
     def filters(self) -> List[Filter]:
-        star_filters = []
+        star_filters = []  # type: Iterable
         for dim in self.dimensions:
             for op in dim.summary_field.filter_operators:
                 fk_filter = Filter(
@@ -456,7 +459,7 @@ class Star:
     def select(self, max_rows: int = 1000) -> Select:
         """Override the Fact tables select method implementation to
         account for foreign key filters."""
-        fact = self.fact.schema
+        fact = self.fact.schema  # type: sqa.Table
         star = fact
         for dim in self.dimensions:
             star = star.join(dim.schema)
@@ -467,34 +470,34 @@ class Star:
 
 
 class Constellation:
+    """Collection of all the star systems in the application"""
     def __init__(self, *,
             app,
-            dimensions: Optional[List[Dimension]],
+            dimensions: List[Dimension],
             facts: List[Fact]
     ) -> None:
-        super(Constellation, self).__init__()
 
         self.app = app
-        self.dimensions = dimensions
-        self.facts = facts
+        self.dimensions = dimensions  # List[Dimension]
+        self.facts = facts  # type: List[Fact]
         self._foreign_keys = {
             tbl.table_name: {}
             for tbl in dimensions
         }  # type: Dict[str, Dict[int, str]]
 
-    @immutable_property
-    def stars(self) -> List[Star]:
+    @static_property
+    def stars(self) -> Dict[str, Star]:
         return {
             fact.table_name: Star(fact=fact, dimensions=self.dimensions)
             for fact in self.facts
         }
 
-    @immutable_property
-    def tables(self):
+    @static_property
+    def tables(self) -> List[Table]:
         return chain(self.facts, self.dimensions)
 
     @property
-    def foreign_key_lookups(self):
+    def foreign_key_lookups(self) -> Dict[str, Select]:
         return {
             tbl.table_name: tbl.foreign_key_schema
             for tbl in self.dimensions
@@ -507,10 +510,11 @@ class Constellation:
         return self._foreign_keys[dim]
 
     def pull_foreign_keys(self, dim: str) -> None:
+        select_statement = self.foreign_key_lookups[dim]  # type: Select
         from db import fetch
         self._foreign_keys[dim] = ValueSortedDict({
             row[0]: str(row[1])
-            for row in fetch(self.foreign_key_lookups[dim])
+            for row in fetch(select_statement)
         })
 
     def star(self, fact_table: str) -> Star:
@@ -519,6 +523,8 @@ class Constellation:
 
 
 # if __name__ == '__main__':
+#     from config import cfg
+#     print(type(cfg.stars('factSales').fact.schema))
 #     import doctest
 #     doctest.ELLIPSIS_MARKER = '*etc*'
 #     doctest.testmod()
