@@ -57,6 +57,7 @@ def create_sales_history_table():
                 , OrderDate DATETIME
                 , ShippingDate DATETIME
                 , SalesAmount NUMERIC(19, 2)
+                , Paid BOOLEAN
             )
         """)
 
@@ -79,12 +80,14 @@ def add_dummy_sales():
                   , OrderDate
                   , ShippingDate
                   , SalesAmount
+                  , Paid
                 ) VALUES (
                   '{customer_id}'
                   , '{product_id}'
                   , '{order_date}'
                   , '{shipping_date}'
                   , '{sales_amount}'
+                  , '{paid}'
                 )
             """).format(
                 customer_id=random.randint(1, 1000)
@@ -92,6 +95,7 @@ def add_dummy_sales():
                 , order_date=fake.date_time()
                 , shipping_date=fake.date_time()
                 , sales_amount=round(random.random() * 1000, 2)
+                , paid=random.choice([0, 1])
             ))
 
 def add_dummy_customers():

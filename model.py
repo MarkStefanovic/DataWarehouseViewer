@@ -117,6 +117,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def data(self, index: QtCore.QModelIndex, role: int=QtCore.Qt.DisplayRole):
         alignment = {
+            FieldType.bool: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
             FieldType.date: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
             FieldType.int: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
             FieldType.float: QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,

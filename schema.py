@@ -5,7 +5,6 @@ import datetime
 from enum import Enum, unique
 from functools import reduce
 from itertools import chain
-import re
 from sortedcollections import ValueSortedDict
 from sqlalchemy import select
 from typing import (
@@ -26,6 +25,7 @@ from sqlalchemy.sql.dml import (
 
 from custom_types import (
     ColumnIndex,
+    Date,
     DateString,
     DimensionName,
     FactName,
@@ -38,38 +38,28 @@ from utilities import autorepr, static_property
 md = sqa.MetaData()
 
 
-class date(str):
-    def __new__(cls, content) -> DateString:
-        if not content:
-            return super().__new__(cls, '')
-        if isinstance(content, str):
-            if re.match(r"^\d{4}-\d{2}-\d{2}.*$", content):
-                return super().__new__(cls, content[:10])
-            raise ValueError("{v} is not a valid date".format(v=content))
-        return str(content)[:10]
-
-    @staticmethod
-    def convert_to_datetime(val: DateString) -> datetime.date:
-        if re.match(r"^\d{4}-\d{2}-\d{2}.*$", val):
-            return datetime.strptime(val[:10], "%Y-%m-%d").date()
-        raise ValueError("{v} is not a valid date".format(v=val))
-
-
 @unique
 class FieldType(Enum):
-    date = date
+    date = Date
     float = float
     int = int
     str = str
-    bool = bool  # TODO -- add checkbox controls on form too
+    bool = bool
 
     def __init__(self, data_type) -> None:
         self.data_type = data_type
 
     def convert(self, value: SqlDataType) -> SqlDataType:
+        default_value = {
+            Date: '',
+            float: 0.0,
+            int: 0,
+            str: '',
+            bool: False
+        }
         if value:
             return self.data_type(value)
-        return ''
+        return default_value[self.data_type]
 
 
 @unique
@@ -102,12 +92,13 @@ class Operator(Enum):
 @unique
 class FieldFormat(Enum):
     accounting = '{: ,.2f} '  # 2 decimal places, comma, pad for negatives, pad 1 right
+    bool = '{0}{1}'  # basic str
     currency = '${: ,.2f} '  # 2 decimals, add commas, pad for negatives, pad 1 right
     date = '{:%Y-%m-%d}'
     datetime = '{:%Y-%m-%d %H:%M}'
     float = '{:,.4f}'  # show 4 decimal places
     int = '{: d}'  # pad a space for negative numbers
-    str = '{:s}'  # cut off at 40 characters for display
+    str = '{:s}'  # basic str
 
 
 @autorepr
@@ -151,6 +142,7 @@ class Field:
     def schema(self) -> sqa.Column:
         """Map the field to a sqlalchemy Column"""
         type_map = {
+            FieldType.bool: sqa.Boolean,
             FieldType.date: sqa.Date,
             FieldType.float: sqa.Float,
             FieldType.int: sqa.Integer,

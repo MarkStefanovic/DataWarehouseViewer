@@ -150,6 +150,14 @@ cfg = Constellation(
                         Operator.number_equals
                     ]
                 ),
+                Field(
+                    name='Paid',
+                    dtype=FieldType.bool,
+                    display_name='Paid?',
+                    field_format=FieldFormat.str,
+                    filter_operators=[
+                    ]
+                ),
             ]
         )
     ]

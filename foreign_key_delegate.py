@@ -7,7 +7,6 @@ class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
     """ComboBox view inside of a Table. It only shows the ComboBox when it is
        being edited.
     """
-    refresh_signal = QtCore.pyqtSignal()
 
     def __init__(self, model, dimension: str) -> None:
         super().__init__(model)

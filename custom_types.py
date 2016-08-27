@@ -1,5 +1,5 @@
 import datetime
-
+import re
 from typing import (
     NewType,
     Union
@@ -13,3 +13,20 @@ ForeignKeyValue = NewType('ForeignKeyValue', int)
 PrimaryKeyIndex = NewType('PrimaryKeyIndex', int)
 
 SqlDataType = Union[bool, str, int, float, datetime.date, datetime.datetime]
+
+
+class Date(str):
+    def __new__(cls, content) -> DateString:
+        if not content:
+            return super().__new__(cls, '')
+        if isinstance(content, str):
+            if re.match(r"^\d{4}-\d{2}-\d{2}.*$", content):
+                return super().__new__(cls, content[:10])
+            raise ValueError("{v} is not a valid date".format(v=content))
+        return str(content)[:10]
+
+    @staticmethod
+    def convert_to_datetime(val: DateString) -> datetime.date:
+        if re.match(r"^\d{4}-\d{2}-\d{2}.*$", val):
+            return datetime.datetime.strptime(val[:10], "%Y-%m-%d").date()
+        raise ValueError("{v} is not a valid date".format(v=val))
