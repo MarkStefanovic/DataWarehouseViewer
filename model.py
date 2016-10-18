@@ -38,12 +38,13 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def add_row(self, ix: QtCore.QModelIndex) -> None:
         dummies = {
-            FieldType.int: 0
+            FieldType.bool: True
+            , FieldType.int: 0
             , FieldType.float: 0.0
             , FieldType.str: ''
             , FieldType.date: '1900-01-01'
         }
-        dummy_row = []  # type: list
+        dummy_row = []  # type: List
         for fld in self.query_manager.table.fields:
             dummy_row.append(dummies[fld.dtype])
         for k, v in self.query_manager.table.foreign_keys.items():

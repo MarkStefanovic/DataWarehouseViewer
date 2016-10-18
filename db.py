@@ -1,6 +1,11 @@
-from sqlalchemy.sql import Select
+"""This module contains the code that touches the database directly
+
+All of the code in other modules interfaces with the database through the
+classes and functions in this module."""
+
 from typing import Generator, List
 
+from sqlalchemy.sql import Select
 from sqlalchemy import create_engine
 from sqlalchemy.sql import Delete, Insert, Update
 
@@ -42,7 +47,7 @@ class Transaction:
         self.transaction.commit()
         self.connection.close()
         return {
-            'rows_added': self.rows_added,
+            'rows_added':   self.rows_added,
             'rows_deleted': self.rows_deleted,
             'rows_updated': self.rows_updated
         }
@@ -50,6 +55,7 @@ class Transaction:
 
 @log_error
 def execute(cmd) -> int:
+    print(type(cmd))
     con = engine.connect()
     try:
         # from sqlalchemy.dialects import sqlite
@@ -72,8 +78,8 @@ def execute(cmd) -> int:
 def fetch(qry: Select) -> List[str]:
     con = engine.connect()
     try:
-        from sqlalchemy.dialects import sqlite
-        print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+        # from sqlalchemy.dialects import sqlite
+        # print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
         return con.execute(qry).fetchall()
     except:
         raise

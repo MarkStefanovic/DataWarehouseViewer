@@ -10,11 +10,12 @@ from typing import Dict, List
 from PyQt4 import QtCore, QtGui
 import xlwt
 
+from checkbox_delegate import CheckBoxDelegate
 from config import cfg
 from foreign_key_delegate import ForeignKeyDelegate
 from logger import log_error
 from model import AbstractModel
-from schema import Filter, Table
+from schema import Filter, Table, FieldType
 from utilities import delete_old_outputs, rootdir, timestr
 
 
@@ -53,6 +54,7 @@ class DatasheetView(QtGui.QWidget):
         # self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
         self.add_foreign_key_comboboxes()
+        self.add_boolean_checkboxes()
 
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
@@ -117,6 +119,11 @@ class DatasheetView(QtGui.QWidget):
         self.query_designer.stop_export_signal.connect(
             self.model.query_manager.exporter.signals.exit.emit)
         self.btn_undo.clicked.connect(self.undo)
+
+    def add_boolean_checkboxes(self):
+        for i, fld in enumerate(self.model.query_manager.table.fields):
+            if fld.dtype == FieldType.bool:
+                self.table.setItemDelegateForColumn(i, CheckBoxDelegate(self.model))
 
     def add_foreign_key_comboboxes(self) -> None:
         if self.model.query_manager.table.editable:
@@ -329,7 +336,6 @@ class DatasheetView(QtGui.QWidget):
                     , ix=model_ix
                 )
             )
-
 
         menu.addSeparator()
         menu.addAction("Open in Excel", self.export_visible)

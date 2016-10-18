@@ -26,9 +26,9 @@ from sqlalchemy.sql.dml import (
 from custom_types import (
     ColumnIndex,
     Date,
-    DateString,
     DimensionName,
     FactName,
+    FieldName,
     ForeignKeyValue,
     PrimaryKeyIndex,
     SqlDataType
@@ -51,11 +51,11 @@ class FieldType(Enum):
 
     def convert(self, value: SqlDataType) -> SqlDataType:
         default_value = {
-            Date: '',
+            Date:  '',
             float: 0.0,
-            int: 0,
-            str: '',
-            bool: False
+            int:   0,
+            str:   '',
+            bool:  False
         }
         if value:
             return self.data_type(value)
@@ -91,6 +91,8 @@ class Operator(Enum):
 
 @unique
 class FieldFormat(Enum):
+    """This class is used by the query manager when processing the list to
+    represent the data for display."""
     accounting = '{: ,.2f} '  # 2 decimal places, comma, pad for negatives, pad 1 right
     bool = '{0}{1}'  # basic str
     currency = '${: ,.2f} '  # 2 decimals, add commas, pad for negatives, pad 1 right
@@ -103,14 +105,15 @@ class FieldFormat(Enum):
 
 @autorepr
 class Field:
+    """Instances of this class represent a column in a database table."""
     def __init__(self, *,
-        name: str,
-        dtype: FieldType,
-        display_name: str,
-        field_format: Optional[FieldFormat]=None,
-        filter_operators: Optional[List[Operator]]=None,
-        editable: bool=False,
-        primary_key: bool=False
+            name: str,
+            dtype: FieldType,
+            display_name: str,
+            field_format: Optional[FieldFormat] = None,
+            filter_operators: Optional[List[Operator]] = None,
+            editable: bool = False,
+            primary_key: bool = False
     ) -> None:
 
         self.name = name
@@ -123,11 +126,13 @@ class Field:
 
     @static_property
     def default_format(self) -> FieldFormat:
+        """Default display formats per the FieldFormat enum"""
+
         defaults = {
-            FieldType.date: FieldFormat.date,
-            FieldType.int: FieldFormat.int,
+            FieldType.date:  FieldFormat.date,
+            FieldType.int:   FieldFormat.int,
             FieldType.float: FieldFormat.accounting,
-            FieldType.str: FieldFormat.str
+            FieldType.str:   FieldFormat.str
         }
         return defaults[self.dtype]
 
@@ -142,11 +147,11 @@ class Field:
     def schema(self) -> sqa.Column:
         """Map the field to a sqlalchemy Column"""
         type_map = {
-            FieldType.bool: sqa.Boolean,
-            FieldType.date: sqa.Date,
+            FieldType.bool:  sqa.Boolean,
+            FieldType.date:  sqa.Date,
             FieldType.float: sqa.Float,
-            FieldType.int: sqa.Integer,
-            FieldType.str: sqa.String
+            FieldType.int:   sqa.Integer,
+            FieldType.str:   sqa.String
         }
         return sqa.Column(
             self.name,
@@ -157,7 +162,6 @@ class Field:
 
 @autorepr
 class Filter:
-
     def __init__(self, *, field: Field, operator: Operator) -> None:
         self.field = field
         self.operator = operator
@@ -214,11 +218,12 @@ class Table:
 
     This class is meant to be subclassed by Dimension and Fact table classes.
     """
+
     def __init__(self,
-        table_name: str,
-        display_name: str,
-        fields: List[Field],
-        editable: bool,
+            table_name: str,
+            display_name: str,
+            fields: List[Field],
+            editable: bool,
     ) -> None:
 
         self.table_name = table_name
@@ -248,7 +253,8 @@ class Table:
 
     @static_property
     def foreign_keys(self) -> Dict[ColumnIndex, Field]:
-        return {ColumnIndex(i): fld for i, fld in enumerate(self.fields) if isinstance(fld, ForeignKey)}
+        return {ColumnIndex(i): fld for i, fld in enumerate(self.fields) if
+            isinstance(fld, ForeignKey)}
 
     @static_property
     def primary_key(self) -> Field:
@@ -256,7 +262,8 @@ class Table:
 
     @static_property
     def primary_key_index(self) -> PrimaryKeyIndex:
-        return PrimaryKeyIndex(next(i for i, c in enumerate(self.schema.columns) if c.primary_key))
+        return PrimaryKeyIndex(
+            next(i for i, c in enumerate(self.schema.columns) if c.primary_key))
 
     @static_property
     def schema(self) -> sqa.Table:
@@ -264,7 +271,9 @@ class Table:
         cols = [fld.schema for fld in self.fields]
         return sqa.Table(self.table_name, md, *cols)
 
-    def update_row(self, *, pk: PrimaryKeyIndex, values: List[SqlDataType]) -> Update:
+    def update_row(self, *,
+            pk: PrimaryKeyIndex,
+            values: List[SqlDataType]) -> Update:
         """Statement to update a row on the table given the primary key value."""
         for i, v in enumerate(values):
             if self.fields[i].dtype == FieldType.date:
@@ -279,13 +288,13 @@ class SummaryField(Field):
     This field type is used for display on associated fact tables in lieu of
     their integer primary key.
     """
-    def __init__(self, *,
-        display_fields: List[str],
-        display_name: str,
-        separator: str=' ',
-        filter_operators: Optional[List[Operator]]=None
-    ) -> None:
 
+    def __init__(self, *,
+            display_fields: List[str],
+            display_name: str,
+            separator: str = ' ',
+            filter_operators: Optional[List[Operator]] = None
+    ) -> None:
         super(SummaryField, self).__init__(
             name="_".join(display_fields),
             dtype=FieldType.str,
@@ -309,14 +318,14 @@ class Dimension(Table):
     be able to see the entire dimension to edit any foreign keys that may show
     up on the associated Fact table.
     """
-    def __init__(self, *,
-        table_name: DimensionName,
-        display_name: str,
-        fields: List[Field],
-        summary_field: SummaryField,
-        editable: bool=False
-    ) -> None:
 
+    def __init__(self, *,
+            table_name: DimensionName,
+            display_name: str,
+            fields: List[Field],
+            summary_field: SummaryField,
+            editable: bool = False
+    ) -> None:
         super(Dimension, self).__init__(
             table_name=table_name,
             display_name=display_name,
@@ -336,11 +345,12 @@ class Dimension(Table):
     @static_property
     def foreign_key_schema(self) -> Table:
         summary_field = reduce(
-            lambda x, y: x + self.summary_field.separator + y, self.display_field_schemas
-            ).label(self.summary_field.display_name)
+            lambda x, y: x + self.summary_field.separator + y,
+            self.display_field_schemas
+        ).label(self.summary_field.display_name)
         return sqa.select([self.primary_key, summary_field])
 
-    def select(self, max_rows: int=1000) -> Select:
+    def select(self, max_rows: int = 1000) -> Select:
         """Only the dimension has a select method on the table class since
         the Fact table has to consider foreign keys so its select statement
         is composed at the Star level"""
@@ -358,19 +368,18 @@ class Dimension(Table):
         )
         fld.schema = reduce(
             lambda x, y: x + self.summary_field.separator + y,
-                self.display_field_schemas).label(self.summary_field.display_name)
+            self.display_field_schemas).label(self.summary_field.display_name)
         return fld
 
 
 @autorepr
 class ForeignKey(Field):
     def __init__(self, *,
-        name: str,
-        display_name: str,
-        dimension: DimensionName,
-        foreign_key_field: str
+            name: str,
+            display_name: str,
+            dimension: DimensionName,
+            foreign_key_field: str
     ) -> None:
-
         super(ForeignKey, self).__init__(
             name=name,
             dtype=FieldType.int,
@@ -381,14 +390,15 @@ class ForeignKey(Field):
         )
 
         self.dimension = dimension
-        self.foreign_key_field = foreign_key_field # name of id field on dim
+        self.foreign_key_field = foreign_key_field  # name of id field on dim
 
     @static_property
     def schema(self) -> sqa.Column:
         return sqa.Column(
             self.name,
             None,
-            sqa.ForeignKey("{t}.{f}".format(t=self.dimension, f=self.foreign_key_field))
+            sqa.ForeignKey("{t}.{f}".format(t=self.dimension,
+                f=self.foreign_key_field))
         )
 
 
@@ -399,15 +409,15 @@ class Fact(Table):
     Fact tables are generally long, but not wide.  They primarily contain data
     that is aggregated, and references to dimension tables for contextual data.
     They may also contain 'junk' dimensions, which are simply dimensions that
-    don't warrant a seperate table to store them.
+    don't warrant a separate table to store them.
     """
-    def __init__(self, *,
-        table_name: FactName,
-        display_name: str,
-        fields: List[Field],
-        editable: bool=False
-    ) -> None:
 
+    def __init__(self, *,
+            table_name: FactName,
+            display_name: str,
+            fields: List[Field],
+            editable: bool = False
+    ) -> None:
         super(Fact, self).__init__(
             table_name=table_name,
             display_name=display_name,
@@ -426,7 +436,9 @@ class Fact(Table):
 
 @autorepr
 class Star:
-    def __init__(self, fact: Fact, dimensions: List[Dimension]) -> None:
+    """A Star is a Fact table with associated Dimensions"""
+
+    def __init__(self, fact: Fact, dimensions: List[Dimension] = None) -> None:
         self.fact = fact
         self._dimensions = dimensions
 
@@ -457,6 +469,10 @@ class Star:
     def select(self, max_rows: int = 1000) -> Select:
         """Override the Fact tables select method implementation to
         account for foreign key filters."""
+        return self.star_query.limit(max_rows)
+
+    @property
+    def star_query(self) -> Select:
         fact = self.fact.schema  # type: sqa.Table
         star = fact
         for dim in self.dimensions:
@@ -464,17 +480,42 @@ class Star:
         qry = select(fact.columns).select_from(star)
         for f in [flt for flt in self.filters if flt.value]:
             qry = qry.where(f.filter)
-        return qry.limit(max_rows)
+        return qry
+
+
+@autorepr
+class View:
+    """An aggregate view over a Star"""
+
+    def __init__(self, *,
+            fact_table: FactName,
+            group_by_fields: List[FieldName],
+            aggregate_field: FieldName,
+            aggregate_function: str
+    ) -> None:
+        self._fact_table = fact_table
+
+    @static_property
+    def star(self) -> Star:
+        from config import cfg
+        return cfg.star[self._fact_table]
+
+    @static_property
+    def filters(self) -> List[Filter]:
+        return self.star.filters
+
+    def select(self, max_rows: int = 1000) -> Select:
+        return self.star.star_query
 
 
 class Constellation:
-    """Collection of all the star systems in the application"""
+    """Collection of all the Stars in the application"""
+
     def __init__(self, *,
             app,
             dimensions: List[Dimension],
             facts: List[Fact]
     ) -> None:
-
         self.app = app
         self.dimensions = dimensions  # List[Dimension]
         self.facts = facts  # type: List[Fact]
@@ -501,7 +542,8 @@ class Constellation:
             for tbl in self.dimensions
         }
 
-    def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue, SqlDataType]:
+    def foreign_keys(self, dim: DimensionName) -> Dict[
+        ForeignKeyValue, SqlDataType]:
         if self._foreign_keys[dim]:
             return self._foreign_keys[dim]
         self.pull_foreign_keys(dim)
@@ -526,6 +568,5 @@ class Constellation:
 #     import doctest
 #     doctest.ELLIPSIS_MARKER = '*etc*'
 #     doctest.testmod()
-
 
 

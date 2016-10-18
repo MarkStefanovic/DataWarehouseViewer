@@ -1,3 +1,6 @@
+"""The entities in this module are used to support MyPy type checking and to
+improve the readability of the code."""
+
 import datetime
 import re
 from typing import (
@@ -9,6 +12,7 @@ ColumnIndex = NewType('ColumnIndex', int)
 DateString = NewType('DateString', str)
 DimensionName = NewType('DimensionName', str)
 FactName = NewType('FactName', str)
+FieldName = NewType('FieldName', str)
 ForeignKeyValue = NewType('ForeignKeyValue', int)
 PrimaryKeyIndex = NewType('PrimaryKeyIndex', int)
 
