@@ -251,8 +251,6 @@ class DatasheetView(QtGui.QWidget):
         except IndexError:
             val = ""
 
-    #   TODO: Text Search Box: add input box to search for values in the column
-    #           containing the search term
         self.col_like = QtGui.QLineEdit()
         self.col_like.setPlaceholderText("Text like")
         txt_wac = QtGui.QWidgetAction(menu)

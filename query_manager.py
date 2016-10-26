@@ -109,11 +109,11 @@ class QueryManager(QtCore.QObject):
     @property
     def sql_display(self) -> Select:
         if self.star:
-            return self.star.select(max_rows=cfg.app.maximum_display_rows)
-        return self.table.select(max_rows=cfg.app.maximum_display_rows)
+            return self.star.select
+        return self.table.select
 
     @property
     def sql_export(self) -> Select:
         if self.star:
-            return self.star.select(max_rows=cfg.app.maximum_export_rows)
-        return self.table.select(max_rows=cfg.app.maximum_export_rows)
+            return self.star.select
+        return self.table.select

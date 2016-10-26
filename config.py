@@ -8,32 +8,26 @@ from schema import (
     ForeignKey,
     Operator,
     SummaryField,
-)
+    AggregateView)
 
 
 class App:
     def __init__(self, *,
         color_scheme: str,
         db_path: str,
-        display_name: str,
-        maximum_display_rows: int,
-        maximum_export_rows: int
+        display_name: str
     ) -> None:
 
         self.color_scheme = color_scheme
         self.db_path = db_path
         self.display_name = display_name
-        self.maximum_display_rows = maximum_display_rows
-        self.maximum_export_rows = maximum_export_rows
 
 
 cfg = Constellation(
     app=App(
-        display_name='SalesDW'
-        , color_scheme='darkcity.css'
-        , db_path='sqlite:///test.db'
-        , maximum_display_rows=10000
-        , maximum_export_rows=500000
+        display_name='SalesDW',
+        color_scheme='darkcity.css',
+        db_path='sqlite:///test.db'
     ),
     dimensions=[
         Dimension(
@@ -104,6 +98,8 @@ cfg = Constellation(
             table_name='factSales',
             display_name='Sales',
             editable=True,
+            display_rows=10000,
+            export_rows=500000,
             fields=[
                 Field(
                     name='OrderID',
@@ -160,5 +156,13 @@ cfg = Constellation(
                 ),
             ]
         )
-    ]
+    ],
+    # aggregate_views=[
+    #     AggregateView(
+    #         display_name='Sales Total by Customer',
+    #         fact_table_name='factSales',
+    #         group_by_field_display_names=['Product'],
+    #         aggregate_field_display_names=['Paid', 'SalesAmount']
+    #     )
+    # ]
 )

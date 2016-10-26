@@ -224,12 +224,16 @@ class Table:
             display_name: str,
             fields: List[Field],
             editable: bool,
+            display_rows: int=10000,
+            export_rows: int=500000
     ) -> None:
 
         self.table_name = table_name
         self.display_name = display_name
         self.fields = fields
         self.editable = editable
+        self.display_rows = display_rows
+        self.export_rows = export_rows
 
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values"""
@@ -324,13 +328,17 @@ class Dimension(Table):
             display_name: str,
             fields: List[Field],
             summary_field: SummaryField,
-            editable: bool = False
+            editable: bool=False,
+            display_rows: int=10000,
+            export_rows: int=500000
     ) -> None:
         super(Dimension, self).__init__(
             table_name=table_name,
             display_name=display_name,
             fields=fields,
-            editable=editable
+            editable=editable,
+            display_rows=display_rows,
+            export_rows=export_rows
         )
 
         self.summary_field = summary_field
@@ -416,13 +424,17 @@ class Fact(Table):
             table_name: FactName,
             display_name: str,
             fields: List[Field],
-            editable: bool = False
+            editable: bool=False,
+            display_rows: int=10000,
+            export_rows: int=500000
     ) -> None:
         super(Fact, self).__init__(
             table_name=table_name,
             display_name=display_name,
             fields=fields,
-            editable=editable
+            editable=editable,
+            display_rows=display_rows,
+            export_rows=export_rows
         )
 
     @property
@@ -436,9 +448,17 @@ class Fact(Table):
 
 @autorepr
 class Star:
-    """A Star is a Fact table with associated Dimensions"""
+    """A Star is a Fact table with associated Dimensions
 
-    def __init__(self, fact: Fact, dimensions: List[Dimension] = None) -> None:
+    A Star is a view for a fact table.  It inherits its editability
+    from its core star.
+    """
+
+    def __init__(self, *,
+        fact: Fact,
+        dimensions: List[Dimension]=None
+    ) -> None:
+
         self.fact = fact
         self._dimensions = dimensions
 
@@ -452,9 +472,13 @@ class Star:
             ]
         ]
 
+    @property
+    def editable(self) -> bool:
+        return self.fact.editable
+
     @static_property
     def filters(self) -> List[Filter]:
-        star_filters = []  # type: Iterable
+        star_filters = []  # type: List
         for dim in self.dimensions:
             for op in dim.summary_field.filter_operators:
                 fk_filter = Filter(
@@ -466,10 +490,11 @@ class Star:
             star_filters.append(f)
         return sorted(star_filters)
 
-    def select(self, max_rows: int = 1000) -> Select:
+    @property
+    def select(self) -> Select:
         """Override the Fact tables select method implementation to
         account for foreign key filters."""
-        return self.star_query.limit(max_rows)
+        return self.star_query.limit(self.fact.display_rows)
 
     @property
     def star_query(self) -> Select:
@@ -483,29 +508,31 @@ class Star:
         return qry
 
 
-@autorepr
-class View:
-    """An aggregate view over a Star"""
-
-    def __init__(self, *,
-            fact_table: FactName,
-            group_by_fields: List[FieldName],
-            aggregate_field: FieldName,
-            aggregate_function: str
-    ) -> None:
-        self._fact_table = fact_table
-
-    @static_property
-    def star(self) -> Star:
-        from config import cfg
-        return cfg.star[self._fact_table]
-
-    @static_property
-    def filters(self) -> List[Filter]:
-        return self.star.filters
-
-    def select(self, max_rows: int = 1000) -> Select:
-        return self.star.star_query
+# @autorepr
+# class AggregateView:
+#     """An aggregate view over a Star"""
+#
+#     def __init__(self, *,
+#             display_name: str,
+#             fact_table_name: FactName,
+#             group_by_field_display_names: List[FieldName],
+#             aggregate_field_display_names: FieldName
+#     ) -> None:
+#
+#         self._fact_table_name = fact_table_name
+#
+#     @static_property
+#     def star(self) -> Star:
+#         from config import cfg
+#         return cfg.star[self._fact_table]
+#
+#     @static_property
+#     def filters(self) -> List[Filter]:
+#         return self.star.filters
+#
+#     @property
+#     def select(self) -> Select:
+#         return self.star.star_query
 
 
 class Constellation:
@@ -542,8 +569,8 @@ class Constellation:
             for tbl in self.dimensions
         }
 
-    def foreign_keys(self, dim: DimensionName) -> Dict[
-        ForeignKeyValue, SqlDataType]:
+    def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue,
+                                                       SqlDataType]:
         if self._foreign_keys[dim]:
             return self._foreign_keys[dim]
         self.pull_foreign_keys(dim)
@@ -559,6 +586,7 @@ class Constellation:
 
     def star(self, fact_table: FactName) -> Star:
         """Return the specific Star system localized on a specific Fact table"""
+
         return self.stars[fact_table]
 
 
