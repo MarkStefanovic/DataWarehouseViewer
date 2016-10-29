@@ -66,7 +66,7 @@ class DatasheetView(QtGui.QWidget):
     #   LAYOUT
         self.layout = QtGui.QGridLayout()
         self.setLayout(self.layout)
-        self.layout.setColumnStretch(0, 1)  # query designer
+        self.layout.setColumnStretch(0, 1)  # rows designer
         self.layout.setColumnStretch(1, 6)  # ds and summary
 
         self.query_designer = QueryDesigner(filters=self.model.query_manager.filters)
@@ -113,7 +113,7 @@ class DatasheetView(QtGui.QWidget):
         # self.model.rows_fetched_signal.connect(self.open_comboboxes)
         self.query_designer.add_criteria_signal.connect(self.add_query_criteria)
         # self.query_designer.error_signal.connect(self.set_status)
-        self.query_designer.export_signal.connect(self.export_all)
+        self.query_designer.export_signal.connect(self.export_results)
         self.query_designer.pull_signal.connect(self.pull)
         self.query_designer.reset_signal.connect(self.reset_query)
         self.query_designer.stop_export_signal.connect(
@@ -143,14 +143,13 @@ class DatasheetView(QtGui.QWidget):
     def exit(self):
         self.stop_everything.emit()
 
-    def export_all(self) -> None:
-        self.model.query_manager.export()
-
-    def export_visible(self) -> None:
-        self.to_excel(
-            data=self.model.visible_data,
-            header=self.model.query_manager.headers
-        )
+    def export_results(self) -> None:
+        if self.model.visible_data:
+            self.model.query_manager.export(
+                rows=self.model.visible_rows,
+                header=self.model.visible_header
+            )
+        self.set_status(msg="No rows to export")
 
     @QtCore.pyqtSlot(int)
     def filter_col_like(self, col_ix):
@@ -336,7 +335,7 @@ class DatasheetView(QtGui.QWidget):
             )
 
         menu.addSeparator()
-        menu.addAction("Open in Excel", self.export_visible)
+        menu.addAction("Open in Excel", self.export_results)
 
         menu.addSeparator()
         submenu = QtGui.QMenu(menu)
@@ -430,31 +429,6 @@ class DatasheetView(QtGui.QWidget):
     @QtCore.pyqtSlot(str)
     def outside_error(self, msg):
         self.set_status(msg)
-
-    def to_excel(self, data, header):
-        """Save displayed items to Excel file."""
-
-        if not data:
-            # self.set_status('No data was returned')
-            return
-        folder = 'output'
-        if not os.path.exists(folder) or not os.path.isdir(folder):
-            os.mkdir(folder)
-        wb = xlwt.Workbook()
-        sht = wb.add_sheet('temp', cell_overwrite_ok=True)
-        header_style = xlwt.easyxf(
-            'pattern: pattern solid, fore_colour dark_blue;'
-            'font: colour white, bold True;'
-        )
-        [sht.write(0, i, x, header_style) for i, x in enumerate(header)]
-        for i, row in enumerate(data):
-            for j, col in enumerate(data[i]):
-                sht.write(i + 1, j, col)
-        t = time.strftime("%Y-%m-%d.%H%M%S")
-        dest = os.path.join(folder, 'temp_{}.xls'.format(t))
-        delete_old_outputs(folder)
-        wb.save(dest)
-        Popen(dest, shell=True)
 
     def reset_query(self):
         # self.txt_search.setText('')

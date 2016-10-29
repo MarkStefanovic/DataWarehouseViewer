@@ -350,3 +350,35 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.visible_data = deepcopy(results)
         self.modified_data = deepcopy(results)
         self.layoutChanged.emit()
+
+    @property
+    def visible_rows(self):
+        """The data as it is displayed to the user
+
+        This property is used as the data source for exporting the table"""
+
+        pk = self.query_manager.table.primary_key_index
+
+        def convert_row(row):
+            return (
+                self.fk_lookup(val=val, col=col)
+                for col, val
+                in enumerate(row)
+                if col != pk
+            )
+
+        if self.visible_data:
+            return [
+                convert_row(row)
+                for row in self.visible_data
+            ]
+
+    @property
+    def visible_header(self):
+        pk = self.query_manager.table.primary_key_index
+        return [
+            hdr
+            for col, hdr
+            in enumerate(self.query_manager.headers)
+            if col != pk
+        ]

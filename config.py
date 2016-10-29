@@ -7,8 +7,8 @@ from schema import (
     FieldType,
     ForeignKey,
     Operator,
-    SummaryField,
-    AggregateView)
+    SummaryField
+)
 
 
 class App:
@@ -156,13 +156,5 @@ cfg = Constellation(
                 ),
             ]
         )
-    ],
-    # aggregate_views=[
-    #     AggregateView(
-    #         display_name='Sales Total by Customer',
-    #         fact_table_name='factSales',
-    #         group_by_field_display_names=['Product'],
-    #         aggregate_field_display_names=['Paid', 'SalesAmount']
-    #     )
-    # ]
+    ]
 )

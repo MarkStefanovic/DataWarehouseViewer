@@ -91,7 +91,7 @@ class Operator(Enum):
 
 @unique
 class FieldFormat(Enum):
-    """This class is used by the query manager when processing the list to
+    """This class is used by the rows manager when processing the list to
     represent the data for display."""
     accounting = '{: ,.2f} '  # 2 decimal places, comma, pad for negatives, pad 1 right
     bool = '{0}{1}'  # basic str
@@ -162,7 +162,11 @@ class Field:
 
 @autorepr
 class Filter:
-    def __init__(self, *, field: Field, operator: Operator) -> None:
+    def __init__(self, *,
+            field: Field,
+            operator: Operator
+    ) -> None:
+
         self.field = field
         self.operator = operator
         self._value = None  # type: Optional[SqlDataType]
@@ -332,6 +336,7 @@ class Dimension(Table):
             display_rows: int=10000,
             export_rows: int=500000
     ) -> None:
+
         super(Dimension, self).__init__(
             table_name=table_name,
             display_name=display_name,
@@ -358,6 +363,7 @@ class Dimension(Table):
         ).label(self.summary_field.display_name)
         return sqa.select([self.primary_key, summary_field])
 
+    @property
     def select(self, max_rows: int = 1000) -> Select:
         """Only the dimension has a select method on the table class since
         the Fact table has to consider foreign keys so its select statement
@@ -388,6 +394,7 @@ class ForeignKey(Field):
             dimension: DimensionName,
             foreign_key_field: str
     ) -> None:
+
         super(ForeignKey, self).__init__(
             name=name,
             dtype=FieldType.int,
@@ -428,6 +435,7 @@ class Fact(Table):
             display_rows: int=10000,
             export_rows: int=500000
     ) -> None:
+
         super(Fact, self).__init__(
             table_name=table_name,
             display_name=display_name,
@@ -543,6 +551,7 @@ class Constellation:
             dimensions: List[Dimension],
             facts: List[Fact]
     ) -> None:
+
         self.app = app
         self.dimensions = dimensions  # List[Dimension]
         self.facts = facts  # type: List[Fact]

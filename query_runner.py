@@ -4,12 +4,14 @@ import time
 from db import fetch
 from logger import log_error
 
+
 class QueryRunnerSignals(QtCore.QObject):
     error = QtCore.pyqtSignal(str)
     exit = QtCore.pyqtSignal()
     done = QtCore.pyqtSignal()
     results = QtCore.pyqtSignal(list)
     rows_returned_msg = QtCore.pyqtSignal(str)
+
 
 class QueryRunnerThread(QtCore.QThread):
 
@@ -18,7 +20,6 @@ class QueryRunnerThread(QtCore.QThread):
         self.query = query  # type: str
         self.signals = QueryRunnerSignals()
         self.start_time = time.time()
-        self.stop_everything = False
 
     @log_error
     def pull(self) -> None:
@@ -43,7 +44,6 @@ class QueryRunnerThread(QtCore.QThread):
         self.pull()
 
     def stop(self) -> None:
-        self.stop_everything = True
         self.exit()
         self.quit()
 

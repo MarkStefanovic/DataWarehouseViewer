@@ -17,7 +17,7 @@ from utilities import static_property
 
 
 class QueryManager(QtCore.QObject):
-    """Create a query from user input."""
+    """Create a rows from user input."""
 
     error_signal = QtCore.pyqtSignal(str)
     query_results_signal = QtCore.pyqtSignal(list)
@@ -56,8 +56,8 @@ class QueryManager(QtCore.QObject):
             if fld.name == name
         )
 
-    def export(self) -> None:
-        self.exporter.start_pull(query=self.sql_export, headers=self.headers)
+    def export(self, rows: List[List[str]], header: List[str]) -> None:
+        self.exporter.start_export(rows=rows, header=header)
 
     def pull(self) -> None:
         self.runner.run_sql(query=self.sql_display)
