@@ -11,7 +11,7 @@ from db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema import Fact, Table
+from schema import Fact, Table, Dimension
 from sqlalchemy import Table
 from utilities import static_property
 
@@ -100,9 +100,9 @@ class QueryManager(QtCore.QObject):
                 trans.execute(self.table.update_row(pk=id, values=list(row)))
 
             results = trans.commit()
+
             results['new_rows_id_map'] = new_rows_id_map
             return results
-
         except:
             raise
 
@@ -112,8 +112,3 @@ class QueryManager(QtCore.QObject):
             return self.star.select
         return self.table.select
 
-    @property
-    def sql_export(self) -> Select:
-        if self.star:
-            return self.star.select
-        return self.table.select

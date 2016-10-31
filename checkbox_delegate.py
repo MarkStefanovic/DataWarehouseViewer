@@ -19,7 +19,7 @@ class CheckBoxDelegate(QtGui.QStyledItemDelegate):
     cell of the column to which it's applied
     """
     def __init__(self, parent) -> None:
-        QtGui.QItemDelegate.__init__(self, parent)
+        super(CheckBoxDelegate, self).__init__()
 
     def createEditor(self, parent, option, index) -> None:
         return None

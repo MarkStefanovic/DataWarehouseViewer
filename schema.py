@@ -6,17 +6,18 @@ from enum import Enum, unique
 from functools import reduce
 from itertools import chain
 from sortedcollections import ValueSortedDict
-from sqlalchemy import select
+from sqlalchemy import asc, desc, select
 from typing import (
     Dict,
     List,
     Optional,
-    Iterable
-)
+    Iterable,
+    Tuple,
+    Union)
 
 import sqlalchemy as sqa
 from sqlalchemy.sql import Select
-from sqlalchemy.sql.elements import BinaryExpression
+from sqlalchemy.sql.elements import BinaryExpression, literal_column
 from sqlalchemy.sql.dml import (
     Delete,
     Insert,
@@ -110,10 +111,10 @@ class Field:
             name: str,
             dtype: FieldType,
             display_name: str,
-            field_format: Optional[FieldFormat] = None,
-            filter_operators: Optional[List[Operator]] = None,
-            editable: bool = False,
-            primary_key: bool = False
+            field_format: Optional[FieldFormat]=None,
+            filter_operators: Optional[List[Operator]]=None,
+            editable: bool=False,
+            primary_key: bool=False
     ) -> None:
 
         self.name = name
@@ -216,6 +217,22 @@ class Filter:
         self._value = value
 
 
+class SortOrder(Enum):
+    ascending = 1
+    descending = 2
+
+
+@autorepr
+class OrderBy:
+    """This class stores the configuration for a sort order field"""
+    def __init__(self, *,
+            field_name: FieldName,
+            sort_order: SortOrder=SortOrder.ascending
+    ) -> None:
+        self.sort_order = sort_order
+        self.field_name = field_name
+
+
 @autorepr
 class Table:
     """A container to store fields
@@ -228,6 +245,7 @@ class Table:
             display_name: str,
             fields: List[Field],
             editable: bool,
+            order_by: Optional[List[SortOrder]]=None,
             display_rows: int=10000,
             export_rows: int=500000
     ) -> None:
@@ -238,10 +256,19 @@ class Table:
         self.editable = editable
         self.display_rows = display_rows
         self.export_rows = export_rows
+        self.order_by = order_by
 
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values"""
-        return self.schema.insert()
+
+        # we want to use the primary key assigned by the db rather
+        # than the one we auto-generated as a placeholder
+        values_sans_pk = {
+            fld.name: values[i]
+            for i, fld in enumerate(self.fields)
+            if not fld.primary_key
+        }
+        return self.schema.insert().values(values_sans_pk)
 
     def delete_row(self, id: int) -> Delete:
         """Statement to delete a row from the table given the primary key value."""
@@ -266,7 +293,7 @@ class Table:
 
     @static_property
     def primary_key(self) -> Field:
-        return next(c for c in self.schema.columns if c.primary_key == True)
+        return next(c for c in self.schema.columns if c.primary_key is True)
 
     @static_property
     def primary_key_index(self) -> PrimaryKeyIndex:
@@ -281,7 +308,9 @@ class Table:
 
     def update_row(self, *,
             pk: PrimaryKeyIndex,
-            values: List[SqlDataType]) -> Update:
+            values: List[SqlDataType]
+    ) -> Update:
+
         """Statement to update a row on the table given the primary key value."""
         for i, v in enumerate(values):
             if self.fields[i].dtype == FieldType.date:
@@ -333,6 +362,7 @@ class Dimension(Table):
             fields: List[Field],
             summary_field: SummaryField,
             editable: bool=False,
+            order_by=None,
             display_rows: int=10000,
             export_rows: int=500000
     ) -> None:
@@ -343,7 +373,8 @@ class Dimension(Table):
             fields=fields,
             editable=editable,
             display_rows=display_rows,
-            export_rows=export_rows
+            export_rows=export_rows,
+            order_by=order_by
         )
 
         self.summary_field = summary_field
@@ -363,6 +394,22 @@ class Dimension(Table):
         ).label(self.summary_field.display_name)
         return sqa.select([self.primary_key, summary_field])
 
+    @static_property
+    def order_by_schema(self):
+        """The default sort order for the table"""
+
+        def lkp_sort_order(fld_name: FieldName, sort_order: Optional[SortOrder]=None):
+            fld = self.field(fld_name).schema
+            if sort_order == SortOrder.ascending:
+                return fld.asc()
+            return fld.desc()
+
+        if self.order_by:
+            return [
+                lkp_sort_order(o.field_name, o.sort_order)
+                for o in self.order_by
+            ]
+
     @property
     def select(self, max_rows: int = 1000) -> Select:
         """Only the dimension has a select method on the table class since
@@ -371,10 +418,13 @@ class Dimension(Table):
         s = self.schema.select()
         for f in (flt for flt in self.filters if flt.value):
             s = s.where(f.filter)
+        if self.order_by_schema:
+            for o in self.order_by_schema:
+                s = s.order_by(o)
         return s.limit(max_rows)
 
     @static_property
-    def summary_field_schema(self) -> List[sqa.Column]:
+    def summary_field_schema(self) -> sqa.Column:
         fld = Field(
             name=self.summary_field.display_name,
             display_name=self.summary_field.display_name,
@@ -433,7 +483,8 @@ class Fact(Table):
             fields: List[Field],
             editable: bool=False,
             display_rows: int=10000,
-            export_rows: int=500000
+            export_rows: int=500000,
+            order_by: Optional[List[OrderBy]]=None
     ) -> None:
 
         super(Fact, self).__init__(
@@ -442,7 +493,8 @@ class Fact(Table):
             fields=fields,
             editable=editable,
             display_rows=display_rows,
-            export_rows=export_rows
+            export_rows=export_rows,
+            order_by=order_by
         )
 
     @property
@@ -504,8 +556,37 @@ class Star:
         account for foreign key filters."""
         return self.star_query.limit(self.fact.display_rows)
 
+    @static_property
+    def order_by(self):
+        return self.fact.order_by
+
+    @static_property
+    def order_by_schema(self):
+        """Return the order by fields for the Star"""
+        if not self.order_by:
+            return
+
+        summary_fields = {
+            str(dim.summary_field.display_name): dim.summary_field_schema.schema
+            for dim in self.dimensions
+        }  # type: Dict[FieldName, Field]
+
+        def lkp_sort_order(order_by: OrderBy):
+            if order_by.field_name in summary_fields.keys():
+                fld = summary_fields[order_by.field_name]
+            else:
+                fld = self.fact.field(order_by.field_name)
+            if order_by.sort_order == SortOrder.ascending:
+                return fld.asc()
+            return fld.desc()
+
+        return [
+            lkp_sort_order(o)
+            for o in self.order_by
+        ]
+
     @property
-    def star_query(self) -> Select:
+    def star_query(self):
         fact = self.fact.schema  # type: sqa.Table
         star = fact
         for dim in self.dimensions:
@@ -513,34 +594,47 @@ class Star:
         qry = select(fact.columns).select_from(star)
         for f in [flt for flt in self.filters if flt.value]:
             qry = qry.where(f.filter)
+        if self.order_by_schema:
+            for o in self.order_by_schema:
+                qry = qry.order_by(o)
         return qry
 
 
-# @autorepr
-# class AggregateView:
-#     """An aggregate view over a Star"""
-#
-#     def __init__(self, *,
-#             display_name: str,
-#             fact_table_name: FactName,
-#             group_by_field_display_names: List[FieldName],
-#             aggregate_field_display_names: FieldName
-#     ) -> None:
-#
-#         self._fact_table_name = fact_table_name
-#
-#     @static_property
-#     def star(self) -> Star:
-#         from config import cfg
-#         return cfg.star[self._fact_table]
-#
-#     @static_property
-#     def filters(self) -> List[Filter]:
-#         return self.star.filters
-#
-#     @property
-#     def select(self) -> Select:
-#         return self.star.star_query
+@autorepr
+class View:
+    """An aggregate view over a Star"""
+
+    def __init__(self, *,
+            display_name: str,
+            fact_table_name: FactName,
+            group_by_field_display_names: List[FieldName],
+            aggregate_field_display_names: FieldName
+    ) -> None:
+
+        self._fact_table_name = fact_table_name  # type: str
+        self._group_by_fields = []  # type: Optional[List[FieldName]]
+        self._additive_fields = []  # type: Optional[List[FieldName]]
+
+    @static_property
+    def star(self) -> Star:
+        from config import cfg
+        return cfg.star[self._fact_table]
+
+    @property
+    def filters(self) -> List[Filter]:
+        return self.star.filters
+
+    @property
+    def group_by_fields(self):
+        return [
+            col
+            for col in self.star.star_query.columns
+            if col.name in self._group_by_fields
+        ]
+
+    @property
+    def select(self) -> Select:
+        return self.star.star_query
 
 
 class Constellation:

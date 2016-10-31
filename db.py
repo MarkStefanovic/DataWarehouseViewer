@@ -3,7 +3,7 @@
 All of the code in other modules interfaces with the database through the
 classes and functions in this module."""
 
-from typing import Generator, List, Union
+from typing import Dict, Generator, List, Union
 
 from sqlalchemy.sql import Select
 from sqlalchemy import create_engine
@@ -24,8 +24,8 @@ class Transaction:
         self.rows_updated = 0
 
     def execute(self, cmd: Union[Delete, Insert, Update]):
-        # from sqlalchemy.dialects import sqlite
-        # print(cmd.compile(dialect=sqlite.dialect()))
+        from sqlalchemy.dialects import sqlite
+        print(cmd.compile(dialect=sqlite.dialect()))
         try:
             result = self.connection.execute(cmd)
             if type(cmd) == Delete:
@@ -43,7 +43,7 @@ class Transaction:
             self.connection.close()
             raise
 
-    def commit(self) -> None:
+    def commit(self) -> Dict[str, int]:
         self.transaction.commit()
         self.connection.close()
         return {

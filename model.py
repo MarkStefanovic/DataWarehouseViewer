@@ -2,6 +2,8 @@ from copy import deepcopy
 import operator
 from functools import partial
 import uuid
+
+from PyQt4.QtCore import QModelIndex
 from typing import (
     Any,
     Dict,
@@ -50,9 +52,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
         for k, v in self.query_manager.table.foreign_keys.items():
             dummy_row[k] = next(fk for fk in self.foreign_keys[k])
         dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
-        self.visible_data.insert(ix.row(), dummy_row)
+        self.beginInsertRows(QModelIndex(), 0, 0)
+        self.visible_data.insert(ix.row() + 1, dummy_row)
         self.modified_data.insert(0, dummy_row)
-        self.dataChanged.emit(ix, ix)
+        self.endInsertRows()
+        # self.dataChanged.emit(ix, ix)
 
     def canFetchMore(self, index=QtCore.QModelIndex()):
         if len(self.visible_data) > self.rows_loaded:

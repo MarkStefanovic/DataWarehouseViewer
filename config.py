@@ -7,8 +7,8 @@ from schema import (
     FieldType,
     ForeignKey,
     Operator,
-    SummaryField
-)
+    SummaryField,
+    OrderBy, SortOrder)
 
 
 class App:
@@ -59,7 +59,13 @@ cfg = Constellation(
                 display_name='Product',
                 separator=' - ',
                 filter_operators=[Operator.str_like]
-            )
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='ProductName',
+                    sort_order=SortOrder.ascending
+                )
+            ]
         )
         , Dimension(
             table_name='dimCustomer',
@@ -90,7 +96,13 @@ cfg = Constellation(
                 display_name='Customer',
                 separator=' - ',
                 filter_operators=[Operator.str_like]
-            )
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='CustomerName',
+                    sort_order=SortOrder.ascending
+                )
+            ]
         )
     ],
     facts=[
@@ -154,6 +166,12 @@ cfg = Constellation(
                     filter_operators=[
                     ]
                 ),
+            ],
+            order_by=[
+                OrderBy(
+                    field_name='Customer',
+                    sort_order=SortOrder.ascending
+                )
             ]
         )
     ]
