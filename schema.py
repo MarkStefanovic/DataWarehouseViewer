@@ -245,6 +245,7 @@ class Table:
             display_name: str,
             fields: List[Field],
             editable: bool,
+            show_on_load: bool=False,
             order_by: Optional[List[SortOrder]]=None,
             display_rows: int=10000,
             export_rows: int=500000
@@ -257,6 +258,7 @@ class Table:
         self.display_rows = display_rows
         self.export_rows = export_rows
         self.order_by = order_by
+        self.show_on_load = show_on_load
 
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values"""
@@ -362,7 +364,8 @@ class Dimension(Table):
             fields: List[Field],
             summary_field: SummaryField,
             editable: bool=False,
-            order_by=None,
+            show_on_load: bool=True,
+            order_by: Optional[List[OrderBy]]=None,
             display_rows: int=10000,
             export_rows: int=500000
     ) -> None:
@@ -372,6 +375,7 @@ class Dimension(Table):
             display_name=display_name,
             fields=fields,
             editable=editable,
+            show_on_load=show_on_load,
             display_rows=display_rows,
             export_rows=export_rows,
             order_by=order_by
@@ -398,7 +402,10 @@ class Dimension(Table):
     def order_by_schema(self):
         """The default sort order for the table"""
 
-        def lkp_sort_order(fld_name: FieldName, sort_order: Optional[SortOrder]=None):
+        def lkp_sort_order(
+                fld_name: FieldName,
+                sort_order: Optional[SortOrder]=None):
+
             fld = self.field(fld_name).schema
             if sort_order == SortOrder.ascending:
                 return fld.asc()
@@ -411,7 +418,7 @@ class Dimension(Table):
             ]
 
     @property
-    def select(self, max_rows: int = 1000) -> Select:
+    def select(self, max_rows: int=1000) -> Select:
         """Only the dimension has a select method on the table class since
         the Fact table has to consider foreign keys so its select statement
         is composed at the Star level"""
@@ -481,6 +488,7 @@ class Fact(Table):
             table_name: FactName,
             display_name: str,
             fields: List[Field],
+            show_on_load: bool=False,
             editable: bool=False,
             display_rows: int=10000,
             export_rows: int=500000,
@@ -491,6 +499,7 @@ class Fact(Table):
             table_name=table_name,
             display_name=display_name,
             fields=fields,
+            show_on_load=show_on_load,
             editable=editable,
             display_rows=display_rows,
             export_rows=export_rows,
@@ -557,6 +566,13 @@ class Star:
         return self.star_query.limit(self.fact.display_rows)
 
     @static_property
+    def summary_fields(self) -> Dict[FieldName, Field]:
+        return {
+            str(dim.summary_field.display_name): dim.summary_field_schema.schema
+            for dim in self.dimensions
+        }  # type: Dict[FieldName, Field]
+
+    @static_property
     def order_by(self):
         return self.fact.order_by
 
@@ -566,14 +582,9 @@ class Star:
         if not self.order_by:
             return
 
-        summary_fields = {
-            str(dim.summary_field.display_name): dim.summary_field_schema.schema
-            for dim in self.dimensions
-        }  # type: Dict[FieldName, Field]
-
         def lkp_sort_order(order_by: OrderBy):
-            if order_by.field_name in summary_fields.keys():
-                fld = summary_fields[order_by.field_name]
+            if order_by.field_name in self.summary_fields.keys():
+                fld = self.summary_fields[order_by.field_name]
             else:
                 fld = self.fact.field(order_by.field_name)
             if order_by.sort_order == SortOrder.ascending:
@@ -605,18 +616,20 @@ class View:
     """An aggregate view over a Star"""
 
     def __init__(self, *,
-            display_name: str,
+            view_display_name: str,
             fact_table_name: FactName,
-            group_by_field_display_names: List[FieldName],
-            aggregate_field_display_names: FieldName
+            group_by_field_names: List[FieldName],
+            aggregate_field_names: List[FieldName]
     ) -> None:
 
+        self.display_name = view_display_name  # type: str
         self._fact_table_name = fact_table_name  # type: str
         self._group_by_fields = []  # type: Optional[List[FieldName]]
         self._additive_fields = []  # type: Optional[List[FieldName]]
 
     @static_property
     def star(self) -> Star:
+        """Get a reference to the Star associated with the current Fact table"""
         from config import cfg
         return cfg.star[self._fact_table]
 
@@ -624,7 +637,15 @@ class View:
     def filters(self) -> List[Filter]:
         return self.star.filters
 
-    @property
+    @static_property
+    def additive_fields(self):
+        return [
+            col
+            for col in self.star.star_query.columns
+            if col.name in self._additive_fields
+        ]
+
+    @static_property
     def group_by_fields(self):
         return [
             col
@@ -642,13 +663,15 @@ class Constellation:
 
     def __init__(self, *,
             app,
-            dimensions: List[Dimension],
-            facts: List[Fact]
+            dimensions: Optional[List[Dimension]],
+            facts: List[Fact],
+            views: List[View]
     ) -> None:
 
         self.app = app
-        self.dimensions = dimensions  # List[Dimension]
+        self.dimensions = dimensions  # Optional[List[Dimension]]
         self.facts = facts  # type: List[Fact]
+        self.views = views  # type Optional[List[View]]
         self._foreign_keys = {
             tbl.table_name: {}
             for tbl in dimensions
@@ -689,7 +712,6 @@ class Constellation:
 
     def star(self, fact_table: FactName) -> Star:
         """Return the specific Star system localized on a specific Fact table"""
-
         return self.stars[fact_table]
 
 
