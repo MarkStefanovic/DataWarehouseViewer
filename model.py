@@ -137,9 +137,12 @@ class AbstractModel(QtCore.QAbstractTableModel):
             elif role == QtCore.Qt.TextAlignmentRole:
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
-                if col in self.foreign_keys.keys():
-                    return self.foreign_keys[col][val]
-                return fld.format_value(val)
+                try:
+                    if col in self.foreign_keys.keys():
+                        return self.foreign_keys[col][val]
+                    return fld.format_value(val)
+                except:
+                    return val
         except Exception as e:
             self.error_signal.emit('Error modeling data: {}'.format(e))
 
