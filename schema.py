@@ -1,23 +1,25 @@
 """The classes declared in this module are used by multiple modules within the project.
 
 """
-import datetime
+from collections import ChainMap
 from enum import Enum, unique
 from functools import reduce
 from itertools import chain
 from sortedcollections import ValueSortedDict
 from sqlalchemy import asc, desc, select
+from sqlalchemy import func
 from typing import (
     Dict,
     List,
     Optional,
     Iterable,
     Tuple,
-    Union)
+    Union
+)
 
 import sqlalchemy as sqa
 from sqlalchemy.sql import Select
-from sqlalchemy.sql.elements import BinaryExpression, literal_column
+from sqlalchemy.sql.elements import BinaryExpression
 from sqlalchemy.sql.dml import (
     Delete,
     Insert,
@@ -32,8 +34,8 @@ from custom_types import (
     FieldName,
     ForeignKeyValue,
     PrimaryKeyIndex,
-    SqlDataType
-)
+    SqlDataType,
+    ViewName)
 from utilities import autorepr, static_property
 
 md = sqa.MetaData()
@@ -248,7 +250,6 @@ class Table:
             show_on_load: bool=False,
             order_by: Optional[List[SortOrder]]=None,
             display_rows: int=10000,
-            export_rows: int=500000
     ) -> None:
 
         self.table_name = table_name
@@ -256,7 +257,6 @@ class Table:
         self.fields = fields
         self.editable = editable
         self.display_rows = display_rows
-        self.export_rows = export_rows
         self.order_by = order_by
         self.show_on_load = show_on_load
 
@@ -266,11 +266,16 @@ class Table:
         # we want to use the primary key assigned by the db rather
         # than the one we auto-generated as a placeholder
         values_sans_pk = {
-            fld.name: values[i]
+            fld.name: self.convert_value(values[i], i)
             for i, fld in enumerate(self.fields)
             if not fld.primary_key
         }
         return self.schema.insert().values(values_sans_pk)
+
+    def convert_value(self, val: SqlDataType, field_index: int) -> SqlDataType:
+        if self.fields[field_index].dtype == FieldType.date:
+            return FieldType.date.value.convert_to_datetime(val)
+        return val
 
     def delete_row(self, id: int) -> Delete:
         """Statement to delete a row from the table given the primary key value."""
@@ -312,12 +317,12 @@ class Table:
             pk: PrimaryKeyIndex,
             values: List[SqlDataType]
     ) -> Update:
-
         """Statement to update a row on the table given the primary key value."""
-        for i, v in enumerate(values):
-            if self.fields[i].dtype == FieldType.date:
-                values[i] = FieldType.date.value.convert_to_datetime(v)
-        return self.schema.update().where(self.primary_key == pk).values(values)
+        converted_values = [
+            self.convert_value(val=v, field_index=i)
+            for i, v in enumerate(values)
+        ]
+        return self.schema.update().where(self.primary_key == pk).values(converted_values)
 
 
 @autorepr
@@ -366,8 +371,7 @@ class Dimension(Table):
             editable: bool=False,
             show_on_load: bool=True,
             order_by: Optional[List[OrderBy]]=None,
-            display_rows: int=10000,
-            export_rows: int=500000
+            display_rows: int=10000
     ) -> None:
 
         super(Dimension, self).__init__(
@@ -377,7 +381,6 @@ class Dimension(Table):
             editable=editable,
             show_on_load=show_on_load,
             display_rows=display_rows,
-            export_rows=export_rows,
             order_by=order_by
         )
 
@@ -458,7 +461,7 @@ class ForeignKey(Field):
             display_name=display_name,
             filter_operators=None,
             editable=False,
-            primary_key=True
+            primary_key=False
         )
 
         self.dimension = dimension
@@ -491,7 +494,6 @@ class Fact(Table):
             show_on_load: bool=False,
             editable: bool=False,
             display_rows: int=10000,
-            export_rows: int=500000,
             order_by: Optional[List[OrderBy]]=None
     ) -> None:
 
@@ -502,7 +504,6 @@ class Fact(Table):
             show_on_load=show_on_load,
             editable=editable,
             display_rows=display_rows,
-            export_rows=export_rows,
             order_by=order_by
         )
 
@@ -541,9 +542,19 @@ class Star:
             ]
         ]
 
+    @static_property
+    def display_rows(self):
+        return self.fact.display_rows
+
     @property
     def editable(self) -> bool:
         return self.fact.editable
+
+    @static_property
+    def fields(self):
+        fact_fields = {fld.display_name: fld for fld in self.fact.fields}
+        all_fields = ChainMap({}, fact_fields, self.summary_fields)
+        return all_fields
 
     @static_property
     def filters(self) -> List[Filter]:
@@ -601,7 +612,7 @@ class Star:
         fact = self.fact.schema  # type: sqa.Table
         star = fact
         for dim in self.dimensions:
-            star = star.join(dim.schema)
+            star = star.outerjoin(dim.schema)
         qry = select(fact.columns).select_from(star)
         for f in [flt for flt in self.filters if flt.value]:
             qry = qry.where(f.filter)
@@ -619,43 +630,86 @@ class View:
             view_display_name: str,
             fact_table_name: FactName,
             group_by_field_names: List[FieldName],
-            aggregate_field_names: List[FieldName]
+            aggregate_field_names: List[FieldName],
+            show_on_load: bool=False
     ) -> None:
 
         self.display_name = view_display_name  # type: str
         self._fact_table_name = fact_table_name  # type: str
-        self._group_by_fields = []  # type: Optional[List[FieldName]]
-        self._additive_fields = []  # type: Optional[List[FieldName]]
+        self._group_by_fields = group_by_field_names  # type: Optional[List[FieldName]]
+        self._additive_fields = aggregate_field_names  # type: Optional[List[FieldName]]
+        self.primary_key_index = -1
+        self.editable = False
+        self.show_on_load = show_on_load
 
     @static_property
     def star(self) -> Star:
         """Get a reference to the Star associated with the current Fact table"""
         from config import cfg
-        return cfg.star[self._fact_table]
+        return cfg.star(fact_table=self._fact_table_name)
 
     @property
     def filters(self) -> List[Filter]:
         return self.star.filters
 
     @static_property
+    def foreign_keys(self) -> Dict[ColumnIndex, Field]:
+        return {
+            i: fld
+            for i, fld in enumerate(self.fields)
+            if fld.name in [
+                f.name
+                for f in self.star.fact.foreign_keys.values()
+            ]
+        }
+        return self.star.fact.foreign_keys
+
+    @static_property
     def additive_fields(self):
         return [
-            col
-            for col in self.star.star_query.columns
-            if col.name in self._additive_fields
+            self.star.fields[fld_name]
+            for fld_name in self._additive_fields
         ]
 
     @static_property
     def group_by_fields(self):
         return [
-            col
-            for col in self.star.star_query.columns
-            if col.name in self._group_by_fields
+            self.star.fields[fld_name]
+            for fld_name in self._group_by_fields
         ]
+
+    @static_property
+    def fields_schema(self):
+        return [fld.schema for fld in self.group_by_fields] \
+               + [func.sum(fld.schema) for fld in self.additive_fields]
+
+    @static_property
+    def fields(self):
+        return self.group_by_fields + self.additive_fields
 
     @property
     def select(self) -> Select:
-        return self.star.star_query
+        # qry=None
+        # try:
+
+        star = self.star.fact.schema  # type: sqa.Table
+        for dim in self.star.dimensions:
+            star = star.outerjoin(dim.schema)
+        qry = select(self.fields_schema).select_from(star)
+        for f in [flt for flt in self.star.filters if flt.value]:
+            qry = qry.where(f.filter)
+        for g in self.group_by_fields:
+            qry = qry.group_by(g.schema)
+        if self.star.order_by_schema:
+            for o in self.star.order_by_schema:
+                qry = qry.order_by(o)
+
+        # except Exception as e:
+        #     print(str(e))
+        # from sqlalchemy.dialects import sqlite
+        # print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+
+        return qry.limit(self.star.display_rows)
 
 
 class Constellation:
@@ -684,9 +738,16 @@ class Constellation:
             for fact in self.facts
         }
 
+    # @static_property
+    # def views(self) -> Dict[ViewName, View]:
+    #     return {
+    #         view.display_name: view
+    #         for view in self.views
+    #     }
+
     @static_property
     def tables(self) -> List[Table]:
-        return chain(self.facts, self.dimensions)
+        return chain(self.facts, self.dimensions, self.views)
 
     @property
     def foreign_key_lookups(self) -> Dict[DimensionName, Select]:
@@ -714,6 +775,9 @@ class Constellation:
         """Return the specific Star system localized on a specific Fact table"""
         return self.stars[fact_table]
 
+    def view(self, view_name: ViewName) -> View:
+        """Return the specified View"""
+        return next(view for view in self.views if view.display_name == view_name)
 
 # if __name__ == '__main__':
 #     from config import cfg

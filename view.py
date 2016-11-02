@@ -3,12 +3,9 @@
 from collections import namedtuple, OrderedDict
 from functools import partial
 import os
-from subprocess import Popen
-import time
 from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
-import xlwt
 
 from checkbox_delegate import CheckBoxDelegate
 from config import cfg
@@ -170,7 +167,11 @@ class DatasheetView(QtGui.QWidget):
 
     def hide_pk(self):
         pk = self.model.query_manager.table.primary_key_index
-        self.table.hideColumn(pk)
+        # views don't include the primary key, so we don't try and hide the
+        # primary key on views
+        print('pk:', pk)
+        if pk >= 0:
+            self.table.hideColumn(pk)
 
     def hide_query_designer(self):
         self.layout.removeItem(self.query_designer)
@@ -500,7 +501,6 @@ class QueryDesigner(QtGui.QWidget):
         self.query_controls = {}
         self.create_controls()
 
-    # @log_error
     def add_row(self, filter: Filter) -> None:
         lbl = QtGui.QLabel(filter.display_name)
         txt = QtGui.QLineEdit()
@@ -518,7 +518,6 @@ class QueryDesigner(QtGui.QWidget):
     def add_criteria(self, filter_ix: int, value: str) -> None:
         self.add_criteria_signal.emit(filter_ix, value)
 
-    # @log_error
     def create_controls(self) -> None:
         for f in self.filters[:10]:  # cap at 10 maximum filter input boxes
             self.add_row(f)
@@ -567,12 +566,18 @@ class MainView(QtGui.QDialog):
 
         self.setWindowTitle(app_name)
 
-        tabs = QtGui.QTabWidget()
-        for tbl in cfg.tables:
+        self.tabs = QtGui.QTabWidget()
+        Tab = namedtuple('Tab', 'table_ref ds_ref')
+        self.tab_indices = {}  # type: Dict[int, tuple]
+        for i, tbl in enumerate(cfg.tables):
             ds = DatasheetView(table=tbl)
             self.datasheet_controls.append(ds)
             # self.exit_signal.connect(ds.exit_signal.emit)
-            tabs.addTab(ds, tbl.display_name)
+            self.tab_indices[i] = Tab(table_ref=tbl, ds_ref=ds)
+            self.tabs.addTab(ds, tbl.display_name)
+
+        self.tabs.currentChanged.connect(self.load_tab)
+        self.tabs_loaded = set()
 
         mainLayout = QtGui.QVBoxLayout()
         menubar = QtGui.QMenuBar()
@@ -594,8 +599,17 @@ class MainView(QtGui.QDialog):
         filemenu = menubar.addMenu('&View')
         filemenu.addAction('Toggle Query Designer', self.toggle_query_designer)
 
-        mainLayout.addWidget(tabs)
+        mainLayout.addWidget(self.tabs)
         self.setLayout(mainLayout)
+
+    @QtCore.pyqtSlot(int)
+    def load_tab(self, tab_index: int):
+        """If the table is set to show on load, load it the first time the tab is clicked"""
+        pre_load = self.tab_indices[tab_index].table_ref.show_on_load
+        if pre_load and tab_index not in self.tabs_loaded:
+            # load the tab
+            self.tab_indices[tab_index].ds_ref.query_designer.pull_signal.emit()
+            self.tabs_loaded.add(tab_index)
 
     def open_output_folder(self):
         folder = os.path.join(rootdir(), 'output')

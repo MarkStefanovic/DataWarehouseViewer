@@ -11,7 +11,7 @@ from db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema import Fact, Table, Dimension
+from schema import Fact, Table, Dimension, View
 from sqlalchemy import Table
 from utilities import static_property
 
@@ -28,7 +28,12 @@ class QueryManager(QtCore.QObject):
         self.exporter = QueryExporter()
         self.runner = QueryRunner()
         self.table = table
+
         self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
+        self.view = cfg.view(self.table.display_name) if isinstance(self.table, View) else None
+        print('view:', self.view)
+
+        # self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
         self.filters = self.star.filters if self.star else self.table.filters
         self.headers = [fld.display_name for fld in self.table.fields]
 
@@ -110,5 +115,7 @@ class QueryManager(QtCore.QObject):
     def sql_display(self) -> Select:
         if self.star:
             return self.star.select
+        elif self.view:
+            return self.view.select
         return self.table.select
 

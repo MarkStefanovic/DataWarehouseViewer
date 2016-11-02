@@ -25,7 +25,7 @@ class Transaction:
 
     def execute(self, cmd: Union[Delete, Insert, Update]):
         from sqlalchemy.dialects import sqlite
-        print(cmd.compile(dialect=sqlite.dialect()))
+        print(cmd.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
         try:
             result = self.connection.execute(cmd)
             if type(cmd) == Delete:

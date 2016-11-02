@@ -5,11 +5,10 @@ import uuid
 
 from PyQt4.QtCore import QModelIndex
 from typing import (
-    Any,
     Dict,
     List,
-    Union,
-    Optional, Tuple, Set)
+    Optional, Tuple, Set
+)
 
 from PyQt4 import QtCore
 from sortedcontainers import SortedSet
@@ -54,7 +53,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
         self.beginInsertRows(QModelIndex(), 0, 0)
         self.visible_data.insert(ix.row() + 1, dummy_row)
-        self.modified_data.insert(0, dummy_row)
+        self.modified_data.append(dummy_row)
         self.endInsertRows()
         # self.dataChanged.emit(ix, ix)
 

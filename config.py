@@ -8,7 +8,10 @@ from schema import (
     ForeignKey,
     Operator,
     SummaryField,
-    OrderBy, SortOrder)
+    OrderBy,
+    SortOrder,
+    View
+)
 
 
 class App:
@@ -34,6 +37,7 @@ cfg = Constellation(
             table_name='dimProduct',
             display_name='Products',
             editable=True,
+            show_on_load=True,
             fields=[
                 Field(
                     name='ID',
@@ -71,6 +75,7 @@ cfg = Constellation(
             table_name='dimCustomer',
             display_name='Customers',
             editable=True,
+            show_on_load=True,
             fields=[
                 Field(
                     name='ID',
@@ -111,7 +116,7 @@ cfg = Constellation(
             display_name='Sales',
             editable=True,
             display_rows=10000,
-            export_rows=500000,
+            show_on_load=False,
             fields=[
                 Field(
                     name='OrderID',
@@ -173,6 +178,15 @@ cfg = Constellation(
                     sort_order=SortOrder.ascending
                 )
             ]
+        )
+    ],
+    views=[
+        View(
+            view_display_name='Customer Totals',
+            fact_table_name='factSales',
+            group_by_field_names=['Customer'],
+            aggregate_field_names=['Sales Amount'],
+            show_on_load=True
         )
     ]
 )
