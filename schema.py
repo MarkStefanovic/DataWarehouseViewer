@@ -96,7 +96,7 @@ def convert_value(*,
 
     conversion_functions = {
         FieldType.Date:  convert_date,
-        FieldType.Float: float,
+        FieldType.Float: lambda v: round(float(v), 2),
         FieldType.Int:   int,
         FieldType.Str:   str,
         FieldType.Bool:  bool
@@ -738,7 +738,9 @@ class AdditiveField:
     @property
     def field_format(self):
         """Mimic field property"""
-        return
+        if self.dtype == FieldType.Int:
+            return FieldFormat.Int
+        return FieldFormat.Accounting
 
     @property
     def filter_operators(self):

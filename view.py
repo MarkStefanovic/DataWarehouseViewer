@@ -236,8 +236,10 @@ class DatasheetView(QtGui.QWidget):
 
         row_ix = rows[0] if rows else 0
         col_ix = cols[0] if cols else 0
-        if row_ix < 0 or col_ix < 0:
-            return  # out of bounds
+        # If the user's mouse is not over a column in the table, don't show
+        # the popup menu.
+        if not cols or row_ix < 0 or col_ix < 0:
+            return
 
         menu = QtGui.QMenu(self)
 

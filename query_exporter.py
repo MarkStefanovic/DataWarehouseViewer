@@ -1,14 +1,14 @@
 import os
 import time
 from subprocess import Popen
-from typing import List
+
+from typing import List, Dict
 
 from PyQt4 import QtCore
 import xlwt
 
 from custom_types import TableName
 from logger import log_error
-from db import iterrows
 from utilities import delete_old_outputs
 
 
@@ -59,6 +59,21 @@ class ExportSqlThread(QtCore.QThread):
 
     @log_error
     def run(self) -> None:
+
+        def autofit_cols(sheet) -> None:
+            try:
+                key_len = lambda val: len(str(val))
+                max_col_width = lambda ix, matrix: len(str(max((row[ix] for row in matrix), key=key_len)))
+                col_ct = len(self.rows[0])  # type: int
+                col_specs = {
+                    i: max(max_col_width(i, self.rows), len(self.header[i]))
+                    for i in range(col_ct)
+                }  # type: Dict[int, int]
+                for ix, width in col_specs.items():
+                    sht.col(ix).width = width * 300 #367
+            except Exception as e:
+                print('error formatting column widths: {}'.format(str(e)))
+
         try:
             folder = 'output'
             if not os.path.exists(folder) or not os.path.isdir(folder):
@@ -66,6 +81,7 @@ class ExportSqlThread(QtCore.QThread):
 
             wb = xlwt.Workbook()
             sht = wb.add_sheet(self.table_name, cell_overwrite_ok=True)
+            autofit_cols(sht)
             header_style = xlwt.easyxf(
                 'pattern: pattern solid, fore_colour dark_blue;'
                 'font: colour white, bold True;'
@@ -81,7 +97,7 @@ class ExportSqlThread(QtCore.QThread):
                     n += 1
                     for i, val in enumerate(row):
                         if val:
-                            sht.write(n, i, str(val))
+                            sht.write(n, i, str(val).strip())
                     if n % 1000 == 0:
                         self.signals.rows_exported.emit(n)
             except:

@@ -16,7 +16,7 @@ from sortedcontainers import SortedSet
 from config import cfg
 from custom_types import ColumnIndex, SqlDataType
 from query_manager import QueryManager
-from schema import FieldType, Table, ForeignKey, format_value
+from schema import FieldType, Table, ForeignKey, format_value, convert_value
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
@@ -334,6 +334,13 @@ class AbstractModel(QtCore.QAbstractTableModel):
         # else no changes to save, view displays 'no changes' when this function returns None
 
     def setData(self, ix: QtCore.QModelIndex, value: SqlDataType, role: int=QtCore.Qt.EditRole) -> bool:
+        try:
+            value = convert_value(
+                field_type=self.query_manager.table.fields[ix.column()].dtype,
+                value=value
+            )
+        except:
+            pass
         try:
             pk = self.visible_data[ix.row()][self.query_manager.table.primary_key_index]
             row = next(
