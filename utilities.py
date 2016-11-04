@@ -6,12 +6,8 @@ import re
 from reprlib import recursive_repr
 import sys
 import time
-import sqlite3
 
 from typing import Any, Generator, NamedTuple, Sequence
-
-from sqlalchemy import create_engine
-from sqlalchemy.sql import Delete, Insert, Update
 
 SqliteField = NamedTuple('SqliteField', [
     ('ix', int)
@@ -86,7 +82,7 @@ def delete_old_outputs(path: str):
     If a file is open it will trigger an OS Error,
     but we ignore it.  The file will get deleted later.
     """
-    pattern = r'^temp_\d{4}-\d{2}-\d{2}[.]\d{6}.xls$'
+    pattern = r'^tmp_.*\d{4}-\d{2}-\d{2}[.]\d{6}.xls$'
     for root, dirs, files in os.walk(path):
         for f in files:
             match = re.search(pattern, f)
@@ -96,6 +92,8 @@ def delete_old_outputs(path: str):
                 except:
                     pass
 
+def timestamp() -> str:
+    return time.strftime('%I:%M:%S %p')
 
 def timestr() -> str:
     return time.strftime("%H:%M:%S")

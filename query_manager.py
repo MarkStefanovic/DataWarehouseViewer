@@ -7,11 +7,12 @@ from typing import Dict, List, Tuple
 from PyQt4 import QtCore
 
 from config import cfg
+from custom_types import TableName
 from db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema import Fact, Table, Dimension, View
+from schema import Fact, Table, Dimension, View, convert_value, format_value
 from sqlalchemy import Table
 from utilities import static_property
 
@@ -27,13 +28,15 @@ class QueryManager(QtCore.QObject):
 
         self.exporter = QueryExporter()
         self.runner = QueryRunner()
+
         self.table = table
+        self.star = cfg.star(self.table.table_name) \
+            if isinstance(self.table, Fact) \
+            else None
+        self.view = cfg.view(self.table.display_name) \
+            if isinstance(self.table, View) \
+            else None
 
-        self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
-        self.view = cfg.view(self.table.display_name) if isinstance(self.table, View) else None
-        print('view:', self.view)
-
-        # self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
         self.filters = self.star.filters if self.star else self.table.filters
         self.headers = [fld.display_name for fld in self.table.fields]
 
@@ -61,8 +64,12 @@ class QueryManager(QtCore.QObject):
             if fld.name == name
         )
 
-    def export(self, rows: List[List[str]], header: List[str]) -> None:
-        self.exporter.start_export(rows=rows, header=header)
+    def export(self, *,
+            rows: List[List[str]],
+            header: List[str],
+            table_name: TableName
+    ) -> None:
+        self.exporter.start_export(rows=rows, header=header, table_name=table_name)
 
     def pull(self) -> None:
         self.runner.run_sql(query=self.sql_display)
@@ -75,7 +82,11 @@ class QueryManager(QtCore.QObject):
             for r, row in enumerate(results):
                 processed.append(list(row))
                 for c, col in enumerate(row):
-                    processed[r][c] = self.table.fields[c].dtype.convert(col)
+                    field_type = self.table.fields[c].dtype
+                    processed[r][c] = convert_value(
+                        field_type=field_type,
+                        value=col
+                    )
             self.query_results_signal.emit(processed)
         except Exception as e:
             err_msg = "Error processing results: {}".format(e)

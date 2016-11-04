@@ -6,6 +6,7 @@ from typing import List
 from PyQt4 import QtCore
 import xlwt
 
+from custom_types import TableName
 from logger import log_error
 from db import iterrows
 from utilities import delete_old_outputs
@@ -26,9 +27,13 @@ class QueryExporter(QtCore.QObject):
         self.signals = SqlSignals()
         self.thread = None  # type: ExportSqlThread
 
-    def start_export(self, rows: List[List[str]], header: List[str]) -> None:
+    def start_export(self, *,
+            rows: List[List[str]],
+            header: List[str],
+            table_name: TableName
+    ) -> None:
         self.signals.exit.emit()  # stop current thread
-        self.thread = ExportSqlThread(rows, header)
+        self.thread = ExportSqlThread(rows=rows, header=header, table_name=table_name)
         self.signals.exit.connect(self.thread.stop)
         self.thread.signals.error.connect(self.signals.error.emit)  # pass along
         self.thread.signals.rows_exported.connect(self.signals.rows_exported.emit)  # pass along
@@ -39,10 +44,15 @@ class ExportSqlThread(QtCore.QThread):
     """
      Writes a sql query_manager to an Excel workbook.
     """
-    def __init__(self, rows: List[List[str]], header: List[str]) -> None:
+    def __init__(self, *,
+            rows: List[List[str]],
+            header: List[str],
+            table_name: TableName
+    ) -> None:
         super(ExportSqlThread, self).__init__()
         self.rows = rows  # type: List[List[str]]
         self.header = header  # type: List[str]
+        self.table_name = table_name  # type: TableName
         self.signals = SqlSignals()
         # stop thread in relatively safe spots
         self.stop_everything = False
@@ -55,7 +65,7 @@ class ExportSqlThread(QtCore.QThread):
                 os.mkdir(folder)
 
             wb = xlwt.Workbook()
-            sht = wb.add_sheet('temp', cell_overwrite_ok=True)
+            sht = wb.add_sheet(self.table_name, cell_overwrite_ok=True)
             header_style = xlwt.easyxf(
                 'pattern: pattern solid, fore_colour dark_blue;'
                 'font: colour white, bold True;'
@@ -80,7 +90,7 @@ class ExportSqlThread(QtCore.QThread):
             if self.stop_everything:
                 return
             t = time.strftime("%Y-%m-%d.%H%M%S")
-            dest = os.path.join(folder, 'temp_{}.xls'.format(t))
+            dest = os.path.join(folder, 'tmp_{}_{}.xls'.format(self.table_name, t))
             delete_old_outputs(folder)
             wb.save(dest)
             Popen(dest, shell=True)

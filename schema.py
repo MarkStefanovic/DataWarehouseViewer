@@ -1,19 +1,21 @@
 """The classes declared in this module are used by multiple modules within the project.
 
 """
+import datetime
 from collections import ChainMap
 from enum import Enum, unique
 from functools import reduce
 from itertools import chain
+import re
+
 from sortedcollections import ValueSortedDict
-from sqlalchemy import asc, desc, select
+from sqlalchemy import select
 from sqlalchemy import func
+from sqlalchemy.sql import default_comparator  # needed by cx_freeze
 from typing import (
     Dict,
     List,
     Optional,
-    Iterable,
-    Tuple,
     Union
 )
 
@@ -25,17 +27,17 @@ from sqlalchemy.sql.dml import (
     Insert,
     Update
 )
-
 from custom_types import (
     ColumnIndex,
-    Date,
     DimensionName,
     FactName,
     FieldName,
     ForeignKeyValue,
     PrimaryKeyIndex,
     SqlDataType,
-    ViewName)
+    ViewName
+)
+from logger import log_error
 from utilities import autorepr, static_property
 
 md = sqa.MetaData()
@@ -43,27 +45,129 @@ md = sqa.MetaData()
 
 @unique
 class FieldType(Enum):
-    date = Date
-    float = float
-    int = int
-    str = str
-    bool = bool
+    Date = 1
+    Float = 2
+    Int = 3
+    Str = 4
+    Bool = 5
 
     def __init__(self, data_type) -> None:
         self.data_type = data_type
 
-    def convert(self, value: SqlDataType) -> SqlDataType:
-        default_value = {
-            Date:  '',
-            float: 0.0,
-            int:   0,
-            str:   '',
-            bool:  False
-        }
-        if value:
-            return self.data_type(value)
-        return default_value[self.data_type]
 
+@unique
+class FieldFormat(Enum):
+    """This class is used by the rows manager when processing the list to
+    represent the data for display."""
+    Accounting = 1
+    Bool = 2
+    Currency = 3
+    Date = 4
+    DateTime = 5
+    Float = 6
+    Int = 7
+    Str = 8
+
+    def __init__(self, field_format) -> None:
+        self.field_format = field_format
+
+
+def convert_value(*,
+        field_type: FieldType,
+        value: Optional[SqlDataType]=None
+    ) -> SqlDataType:
+    """Convert a string value to a Python data type
+
+    This conversion function is used to translate user input to a form that
+    sqlalchemy can use."""
+    def convert_date(date_val: Optional[str]='1900-01-01'):
+        try:
+            if not date_val:
+                return datetime.datetime(1900, 1, 1).date()
+            if isinstance(date_val, str):
+                if re.match(r"^\d{4}-\d{2}-\d{2}.*$", date_val):
+                    return datetime.datetime.strptime(date_val[:10], "%Y-%m-%d").date()
+                raise ValueError("{v} is not a valid date".format(v=date_val))
+            elif isinstance(date_val, datetime.date):
+                return date_val
+            return ''
+        except Exception as e:
+            print("Error converting date value {}; type {}".format(date_val, type(date_val)))
+
+    conversion_functions = {
+        FieldType.Date:  convert_date,
+        FieldType.Float: float,
+        FieldType.Int:   int,
+        FieldType.Str:   str,
+        FieldType.Bool:  bool
+    }
+    default_values = {
+        FieldType.Date:  '',
+        FieldType.Float: 0.0,
+        FieldType.Int:   0,
+        FieldType.Str:   '',
+        FieldType.Bool:  False
+    }
+    try:
+        if not value:
+            return default_values[field_type]
+        return conversion_functions[field_type](value)
+    except Exception as e:
+        print('Error converting value {} to data type {}; err:'
+            .format(value, field_type, str(e)))
+        return default_values[field_type]
+
+
+def format_value(*,
+        field_type: FieldType,
+        value: Optional[SqlDataType]=None,
+        field_format: Optional[FieldFormat]=None
+    ) -> SqlDataType:
+    """Format a string value to a string appropriate for display to the user"""
+
+    inferred_data_types = {
+        FieldFormat.Accounting: FieldType.Float,
+        FieldFormat.Bool:       FieldType.Bool,
+        FieldFormat.Currency:   FieldType.Float,
+        FieldFormat.Date:       FieldType.Date,
+        FieldFormat.DateTime:   FieldType.Date,
+        FieldFormat.Float:      FieldType.Float,
+        FieldFormat.Int:        FieldType.Int,
+        FieldFormat.Str:        FieldType.Str
+    }
+    data_type = inferred_data_types[field_type] if not field_type else field_type
+    inferred_format = lambda fld_type: next(k for k, v in inferred_data_types.items() if v == field_type)
+    format = inferred_format(field_type) if not field_format else field_format
+    formatters = {
+        FieldFormat.Accounting: lambda val: '{: ,.2f} '.format(round(val, 2)),
+        FieldFormat.Bool:       lambda val: str(val),
+        FieldFormat.Currency:   lambda val: '${: ,.2f} '.format(round(val, 2)),
+        FieldFormat.Date:       lambda val: str(val),
+        FieldFormat.DateTime:   lambda val: str(val),
+        FieldFormat.Float:      lambda val: '{:,.4f}'.format(round(val, 2)),
+        FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 2)),
+        FieldFormat.Str:        lambda val: val
+    }
+    default_display_values = {
+        FieldType.Bool: False,
+        FieldType.Float: 0.0,
+        FieldType.Date: datetime.datetime(1900, 1, 1).date(),
+        FieldType.Int: 0,
+        FieldType.Str: ''
+    }
+    # this value is also saved to the db on empty inputs
+    default_value = default_display_values[data_type]
+    val = convert_value(field_type=data_type, value=value) if value else default_value
+    try:
+        return formatters[format](val)
+    except Exception as e:
+        print(
+            'error formatting value,',
+            'val:', value,
+            'data_type:', data_type,
+            'error msg:', str(e)
+        )
+        return value
 
 @unique
 class Operator(Enum):
@@ -92,20 +196,6 @@ class Operator(Enum):
         return self.value
 
 
-@unique
-class FieldFormat(Enum):
-    """This class is used by the rows manager when processing the list to
-    represent the data for display."""
-    accounting = '{: ,.2f} '  # 2 decimal places, comma, pad for negatives, pad 1 right
-    bool = '{0}{1}'  # basic str
-    currency = '${: ,.2f} '  # 2 decimals, add commas, pad for negatives, pad 1 right
-    date = '{:%Y-%m-%d}'
-    datetime = '{:%Y-%m-%d %H:%M}'
-    float = '{:,.4f}'  # show 4 decimal places
-    int = '{: d}'  # pad a space for negative numbers
-    str = '{:s}'  # basic str
-
-
 @autorepr
 class Field:
     """Instances of this class represent a column in a database table."""
@@ -122,39 +212,20 @@ class Field:
         self.name = name
         self.dtype = dtype
         self.display_name = display_name
-        self.field_format = field_format or self.default_format
+        self.field_format = field_format
         self.editable = editable
         self.primary_key = primary_key
         self.filter_operators = filter_operators
 
     @static_property
-    def default_format(self) -> FieldFormat:
-        """Default display formats per the FieldFormat enum"""
-
-        defaults = {
-            FieldType.date:  FieldFormat.date,
-            FieldType.int:   FieldFormat.int,
-            FieldType.float: FieldFormat.accounting,
-            FieldType.str:   FieldFormat.str
-        }
-        return defaults[self.dtype]
-
-    def format_value(self, value: SqlDataType) -> SqlDataType:
-        try:
-            val = self.dtype.convert(value)
-            return self.field_format.value.format(val)
-        except:
-            return value
-
-    @static_property
     def schema(self) -> sqa.Column:
         """Map the field to a sqlalchemy Column"""
         type_map = {
-            FieldType.bool:  sqa.Boolean,
-            FieldType.date:  sqa.Date,
-            FieldType.float: sqa.Float,
-            FieldType.int:   sqa.Integer,
-            FieldType.str:   sqa.String
+            FieldType.Bool:  sqa.Boolean,
+            FieldType.Date:  sqa.Date,
+            FieldType.Float: sqa.Float,
+            FieldType.Int:   sqa.Integer,
+            FieldType.Str:   sqa.String
         }
         return sqa.Column(
             self.name,
@@ -211,7 +282,10 @@ class Filter:
 
     @property
     def value(self) -> SqlDataType:
-        return self.field.dtype.convert(self._value)
+        return convert_value(
+            field_type=self.field.dtype,
+            value=self._value
+        )
 
     @value.setter
     def value(self, value: str) -> None:
@@ -220,8 +294,8 @@ class Filter:
 
 
 class SortOrder(Enum):
-    ascending = 1
-    descending = 2
+    Ascending = 1
+    Descending = 2
 
 
 @autorepr
@@ -229,7 +303,7 @@ class OrderBy:
     """This class stores the configuration for a sort order field"""
     def __init__(self, *,
             field_name: FieldName,
-            sort_order: SortOrder=SortOrder.ascending
+            sort_order: SortOrder=SortOrder.Ascending
     ) -> None:
         self.sort_order = sort_order
         self.field_name = field_name
@@ -265,17 +339,13 @@ class Table:
 
         # we want to use the primary key assigned by the db rather
         # than the one we auto-generated as a placeholder
+
         values_sans_pk = {
-            fld.name: self.convert_value(values[i], i)
+            fld.name: convert_value(value=values[i], field_type=self.fields[i].dtype)
             for i, fld in enumerate(self.fields)
             if not fld.primary_key
         }
         return self.schema.insert().values(values_sans_pk)
-
-    def convert_value(self, val: SqlDataType, field_index: int) -> SqlDataType:
-        if self.fields[field_index].dtype == FieldType.date:
-            return FieldType.date.value.convert_to_datetime(val)
-        return val
 
     def delete_row(self, id: int) -> Delete:
         """Statement to delete a row from the table given the primary key value."""
@@ -295,8 +365,11 @@ class Table:
 
     @static_property
     def foreign_keys(self) -> Dict[ColumnIndex, Field]:
-        return {ColumnIndex(i): fld for i, fld in enumerate(self.fields) if
-            isinstance(fld, ForeignKey)}
+        return {
+            ColumnIndex(i): fld
+            for i, fld in enumerate(self.fields)
+            if isinstance(fld, ForeignKey)
+        }
 
     @static_property
     def primary_key(self) -> Field:
@@ -319,7 +392,7 @@ class Table:
     ) -> Update:
         """Statement to update a row on the table given the primary key value."""
         converted_values = [
-            self.convert_value(val=v, field_index=i)
+            convert_value(value=v, field_type=self.fields[i].dtype)
             for i, v in enumerate(values)
         ]
         return self.schema.update().where(self.primary_key == pk).values(converted_values)
@@ -332,7 +405,6 @@ class SummaryField(Field):
     This field type is used for display on associated fact tables in lieu of
     their integer primary key.
     """
-
     def __init__(self, *,
             display_fields: List[str],
             display_name: str,
@@ -341,8 +413,9 @@ class SummaryField(Field):
     ) -> None:
         super(SummaryField, self).__init__(
             name="_".join(display_fields),
-            dtype=FieldType.str,
+            dtype=FieldType.Str,
             display_name=display_name,
+            field_format=FieldFormat.Str,
             filter_operators=filter_operators,
             editable=False,
             primary_key=False
@@ -410,7 +483,7 @@ class Dimension(Table):
                 sort_order: Optional[SortOrder]=None):
 
             fld = self.field(fld_name).schema
-            if sort_order == SortOrder.ascending:
+            if sort_order == SortOrder.Ascending:
                 return fld.asc()
             return fld.desc()
 
@@ -438,7 +511,8 @@ class Dimension(Table):
         fld = Field(
             name=self.summary_field.display_name,
             display_name=self.summary_field.display_name,
-            dtype=FieldType.str
+            dtype=FieldType.Str,
+            field_format=FieldFormat.Str
         )
         fld.schema = reduce(
             lambda x, y: x + self.summary_field.separator + y,
@@ -457,7 +531,7 @@ class ForeignKey(Field):
 
         super(ForeignKey, self).__init__(
             name=name,
-            dtype=FieldType.int,
+            dtype=FieldType.Int,
             display_name=display_name,
             filter_operators=None,
             editable=False,
@@ -523,7 +597,6 @@ class Star:
     A Star is a view for a fact table.  It inherits its editability
     from its core star.
     """
-
     def __init__(self, *,
         fact: Fact,
         dimensions: List[Dimension]=None
@@ -543,7 +616,7 @@ class Star:
         ]
 
     @static_property
-    def display_rows(self):
+    def display_rows(self) -> int:
         return self.fact.display_rows
 
     @property
@@ -551,7 +624,8 @@ class Star:
         return self.fact.editable
 
     @static_property
-    def fields(self):
+    def fields(self) -> Dict[FieldName, Field]:
+        """Fields indexed by their display name"""
         fact_fields = {fld.display_name: fld for fld in self.fact.fields}
         all_fields = ChainMap({}, fact_fields, self.summary_fields)
         return all_fields
@@ -598,7 +672,7 @@ class Star:
                 fld = self.summary_fields[order_by.field_name]
             else:
                 fld = self.fact.field(order_by.field_name)
-            if order_by.sort_order == SortOrder.ascending:
+            if order_by.sort_order == SortOrder.Ascending:
                 return fld.asc()
             return fld.desc()
 
@@ -623,6 +697,74 @@ class Star:
 
 
 @autorepr
+class AdditiveField:
+    """A field that represents an aggregate of a Fact.
+
+    This field type is only used with Views over a Star.
+    It mimics its base field except for the schema and editability"""
+
+    def __init__(self, *,
+        base_field_display_name: FieldName,
+        aggregate_display_name: FieldName,
+        aggregate_func: func=func.sum
+    ) -> None:
+
+        self.base_field_display_name = base_field_display_name
+        self.display_name = aggregate_display_name
+        self.aggregate_func = aggregate_func
+
+        # The star property is injected by the Star itself later.
+        # It must be populated before this field can be used.
+        self.star = None
+
+    @property
+    def base_field(self) -> Field:
+        if not self.star:
+            raise Exception('AdditiveField must be assigned a star before use.')
+        return self.star.fields[self.base_field_display_name]
+
+    @property
+    def dtype(self):
+        """Mimic field property"""
+        if self.aggregate_func._FunctionGenerator__names == ['count']:
+            return FieldType.Int
+        return self.base_field.dtype
+
+    @property
+    def editable(self):
+        """Mimic field property"""
+        return False
+
+    @property
+    def field_format(self):
+        """Mimic field property"""
+        return
+
+    @property
+    def filter_operators(self):
+        """Mimic field property"""
+        return self.base_field.filter_operators
+
+    @property
+    def name(self):
+        """Mimic field property"""
+        return self.base_field.name
+
+    @property
+    def primary_key(self):
+        """Mimic field property"""
+        return False
+
+    @property
+    def schema(self):
+        return self.aggregate_func(self.base_field.schema).label(self.display_name)
+
+    @log_error
+    def validate(self, star: Star):
+        print('todo')
+
+
+@autorepr
 class View:
     """An aggregate view over a Star"""
 
@@ -630,17 +772,24 @@ class View:
             view_display_name: str,
             fact_table_name: FactName,
             group_by_field_names: List[FieldName],
-            aggregate_field_names: List[FieldName],
+            additive_fields: Optional[List[AdditiveField]],
             show_on_load: bool=False
     ) -> None:
 
         self.display_name = view_display_name  # type: str
         self._fact_table_name = fact_table_name  # type: str
         self._group_by_fields = group_by_field_names  # type: Optional[List[FieldName]]
-        self._additive_fields = aggregate_field_names  # type: Optional[List[FieldName]]
+        self._additive_fields = additive_fields  # type: Optional[List[AdditiveField]]
         self.primary_key_index = -1
         self.editable = False
         self.show_on_load = show_on_load
+
+    @static_property
+    def additive_fields(self):
+        for fld in self._additive_fields:
+            fld.star = self.star
+        return self._additive_fields
+
 
     @static_property
     def star(self) -> Star:
@@ -662,14 +811,6 @@ class View:
                 for f in self.star.fact.foreign_keys.values()
             ]
         }
-        return self.star.fact.foreign_keys
-
-    @static_property
-    def additive_fields(self):
-        return [
-            self.star.fields[fld_name]
-            for fld_name in self._additive_fields
-        ]
 
     @static_property
     def group_by_fields(self):
@@ -681,7 +822,7 @@ class View:
     @static_property
     def fields_schema(self):
         return [fld.schema for fld in self.group_by_fields] \
-               + [func.sum(fld.schema) for fld in self.additive_fields]
+               + [fld.schema for fld in self.additive_fields]
 
     @static_property
     def fields(self):
@@ -689,27 +830,22 @@ class View:
 
     @property
     def select(self) -> Select:
-        # qry=None
-        # try:
-
-        star = self.star.fact.schema  # type: sqa.Table
-        for dim in self.star.dimensions:
-            star = star.outerjoin(dim.schema)
-        qry = select(self.fields_schema).select_from(star)
-        for f in [flt for flt in self.star.filters if flt.value]:
-            qry = qry.where(f.filter)
-        for g in self.group_by_fields:
-            qry = qry.group_by(g.schema)
-        if self.star.order_by_schema:
-            for o in self.star.order_by_schema:
-                qry = qry.order_by(o)
-
-        # except Exception as e:
-        #     print(str(e))
-        # from sqlalchemy.dialects import sqlite
-        # print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
-
-        return qry.limit(self.star.display_rows)
+        try:
+            star = self.star.fact.schema  # type: sqa.Table
+            for dim in self.star.dimensions:
+                star = star.outerjoin(dim.schema)
+            qry = select(self.fields_schema).select_from(star)
+            for f in [flt for flt in self.star.filters if flt.value]:
+                qry = qry.where(f.filter)
+            for g in self.group_by_fields:
+                qry = qry.group_by(g.schema)
+            if self.star.order_by_schema:
+                for o in self.star.order_by_schema:
+                    qry = qry.order_by(o)
+            return qry.limit(self.star.display_rows)
+        except Exception as e:
+            print('error composing select statement for view {}; error {}'
+                  .format(self.display_name, str(e)))
 
 
 class Constellation:

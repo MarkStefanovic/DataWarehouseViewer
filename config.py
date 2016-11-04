@@ -1,3 +1,5 @@
+from sqlalchemy import func
+
 from schema import (
     Constellation,
     Dimension,
@@ -10,8 +12,8 @@ from schema import (
     SummaryField,
     OrderBy,
     SortOrder,
-    View
-)
+    View,
+    AdditiveField)
 
 
 class App:
@@ -41,19 +43,19 @@ cfg = Constellation(
             fields=[
                 Field(
                     name='ID',
-                    dtype=FieldType.int,
+                    dtype=FieldType.Int,
                     display_name='ID',
                     primary_key=True
                 ),
                 Field(
                     name='ProductName',
-                    dtype=FieldType.str,
+                    dtype=FieldType.Str,
                     display_name='Name',
                     filter_operators=[Operator.str_like]
                 ),
                 Field(
                     name='ProductCategory',
-                    dtype=FieldType.str,
+                    dtype=FieldType.Str,
                     display_name='Category',
                     filter_operators=[Operator.str_like]
                 )
@@ -67,7 +69,7 @@ cfg = Constellation(
             order_by=[
                 OrderBy(
                     field_name='ProductName',
-                    sort_order=SortOrder.ascending
+                    sort_order=SortOrder.Ascending
                 )
             ]
         )
@@ -79,19 +81,19 @@ cfg = Constellation(
             fields=[
                 Field(
                     name='ID',
-                    dtype=FieldType.int,
+                    dtype=FieldType.Int,
                     display_name='ID',
                     primary_key=True
                 ),
                 Field(
                     name='CustomerName',
-                    dtype=FieldType.str,
+                    dtype=FieldType.Str,
                     display_name='Customer Name',
                     filter_operators=[Operator.str_like]
                 ),
                 Field(
                     name='ShippingAddress',
-                    dtype=FieldType.str,
+                    dtype=FieldType.Str,
                     display_name='Shipping Address',
                     filter_operators=[Operator.str_like]
                 ),
@@ -105,7 +107,7 @@ cfg = Constellation(
             order_by=[
                 OrderBy(
                     field_name='CustomerName',
-                    sort_order=SortOrder.ascending
+                    sort_order=SortOrder.Ascending
                 )
             ]
         )
@@ -115,12 +117,12 @@ cfg = Constellation(
             table_name='factSales',
             display_name='Sales',
             editable=True,
-            display_rows=10000,
-            show_on_load=False,
+            display_rows=1000,
+            show_on_load=True,
             fields=[
                 Field(
                     name='OrderID',
-                    dtype=FieldType.int,
+                    dtype=FieldType.Int,
                     display_name='ID',
                     primary_key=True
                 ),
@@ -138,7 +140,7 @@ cfg = Constellation(
                 ),
                 Field(
                     name='OrderDate',
-                    dtype=FieldType.date,
+                    dtype=FieldType.Date,
                     display_name='Order Date',
                     filter_operators=[
                         Operator.date_on_or_after,
@@ -147,7 +149,7 @@ cfg = Constellation(
                 ),
                 Field(
                     name='ShippingDate',
-                    dtype=FieldType.date,
+                    dtype=FieldType.Date,
                     display_name='Shipping Date',
                     filter_operators=[
                         Operator.date_on_or_after,
@@ -156,18 +158,18 @@ cfg = Constellation(
                 ),
                 Field(
                     name='SalesAmount',
-                    dtype=FieldType.float,
+                    dtype=FieldType.Float,
                     display_name='Sales Amount',
-                    field_format=FieldFormat.accounting,
+                    field_format=FieldFormat.Accounting,
                     filter_operators=[
                         Operator.number_equals
                     ]
                 ),
                 Field(
                     name='Paid',
-                    dtype=FieldType.bool,
+                    dtype=FieldType.Bool,
                     display_name='Paid?',
-                    field_format=FieldFormat.str,
+                    field_format=FieldFormat.Str,
                     filter_operators=[
                     ]
                 ),
@@ -175,7 +177,7 @@ cfg = Constellation(
             order_by=[
                 OrderBy(
                     field_name='Customer',
-                    sort_order=SortOrder.ascending
+                    sort_order=SortOrder.Ascending
                 )
             ]
         )
@@ -185,7 +187,46 @@ cfg = Constellation(
             view_display_name='Customer Totals',
             fact_table_name='factSales',
             group_by_field_names=['Customer'],
-            aggregate_field_names=['Sales Amount'],
+            additive_fields=[
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Transactions',
+                    aggregate_func=func.count
+                ),
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Total Sales',
+                    aggregate_func=func.sum
+                ),
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Average Sale',
+                    aggregate_func=func.avg
+                )
+            ],
+            show_on_load=True
+        ),
+        View(
+            view_display_name='Product Totals',
+            fact_table_name='factSales',
+            group_by_field_names=['Product'],
+            additive_fields=[
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Transactions',
+                    aggregate_func=func.count
+                ),
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Total Sales',
+                    aggregate_func=func.sum
+                ),
+                AdditiveField(
+                    base_field_display_name='Sales Amount',
+                    aggregate_display_name='Average Sale',
+                    aggregate_func=func.avg
+                )
+            ],
             show_on_load=True
         )
     ]

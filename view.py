@@ -13,7 +13,7 @@ from foreign_key_delegate import ForeignKeyDelegate
 from logger import log_error
 from model import AbstractModel
 from schema import Filter, Table, FieldType
-from utilities import delete_old_outputs, rootdir, timestr
+from utilities import delete_old_outputs, rootdir, timestr, timestamp
 
 
 class Control:
@@ -47,7 +47,7 @@ class DatasheetView(QtGui.QWidget):
 
     #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
-        self.btn_reset = QtGui.QPushButton('&Reset Filters')
+        # self.btn_reset = QtGui.QPushButton('&Reset Filters')
         # self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
         self.add_foreign_key_comboboxes()
@@ -71,7 +71,7 @@ class DatasheetView(QtGui.QWidget):
 
         ds_layout = QtGui.QGridLayout()
         ds_layout.setColumnStretch(2, 4)
-        ds_layout.addWidget(self.btn_reset, 0, 0, 1, 1)
+        # ds_layout.addWidget(self.btn_reset, 0, 0, 1, 1)
         # ds_layout.addWidget(self.lbl_search, 0, 1, 1, 1)
         # ds_layout.addWidget(self.txt_search, 0, 2, 1, 1)
         ds_layout.addWidget(self.table, 1, 0, 1, 3)
@@ -80,7 +80,7 @@ class DatasheetView(QtGui.QWidget):
 
         bottom_bar = QtGui.QGridLayout()
         self.statusbar = QtGui.QStatusBar()
-        self.statusbar.showMessage("")
+        # self.statusbar.showMessage("")
         bottom_bar.addWidget(self.statusbar, 0, 0)
         self.btn_save = QtGui.QPushButton("Save")
         self.btn_undo = QtGui.QPushButton("Undo")
@@ -101,15 +101,14 @@ class DatasheetView(QtGui.QWidget):
         self.model.query_manager.exporter.signals.error.connect(self.outside_error)
 
         # self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
-        self.btn_reset.clicked.connect(self.reset)
+        # self.btn_reset.clicked.connect(self.reset)
         self.btn_save.clicked.connect(self.save)
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
         self.model.query_manager.exporter.signals.rows_exported.connect(self.show_rows_exported)
         self.model.query_manager.runner.signals.rows_returned_msg.connect(self.show_rows_returned)
         # self.model.layoutChanged.connect(self.open_comboboxes)
-        # self.model.rows_fetched_signal.connect(self.open_comboboxes)
+        # self.model.query_manager.runner.signals.rows_returned_msg.connect(self.open_comboboxes)
         self.query_designer.add_criteria_signal.connect(self.add_query_criteria)
-        # self.query_designer.error_signal.connect(self.set_status)
         self.query_designer.export_signal.connect(self.export_results)
         self.query_designer.pull_signal.connect(self.pull)
         self.query_designer.reset_signal.connect(self.reset_query)
@@ -119,7 +118,7 @@ class DatasheetView(QtGui.QWidget):
 
     def add_boolean_checkboxes(self):
         for i, fld in enumerate(self.model.query_manager.table.fields):
-            if fld.dtype == FieldType.bool:
+            if fld.dtype == FieldType.Bool:
                 self.table.setItemDelegateForColumn(i, CheckBoxDelegate(self.model))
 
     def add_foreign_key_comboboxes(self) -> None:
@@ -143,8 +142,9 @@ class DatasheetView(QtGui.QWidget):
     def export_results(self) -> None:
         if self.model.visible_data:
             self.model.query_manager.export(
-                rows=self.model.visible_rows,
-                header=self.model.visible_header
+                rows=self.model.displayed_data, #visible_rows,
+                header=self.model.visible_header,
+                table_name=self.model.query_manager.table.display_name
             )
         self.set_status(msg="No rows to export")
 
@@ -316,6 +316,12 @@ class DatasheetView(QtGui.QWidget):
                 , val=val
             )
         )
+        menu.addSeparator()
+        menu.addAction(
+            "Reset Filters",
+            self.reset
+        )
+
 
         if self.model.query_manager.table.editable:
             menu.addSeparator()
@@ -435,7 +441,7 @@ class DatasheetView(QtGui.QWidget):
         # self.txt_search.setText('')
         self.model.query_manager.reset()
         self.model.full_reset()
-        self.set_status("")
+        self.set_status("Query results reset")
 
     def save(self):
         try:
@@ -456,7 +462,7 @@ class DatasheetView(QtGui.QWidget):
 
     @QtCore.pyqtSlot(str)
     def set_status(self, msg: str) -> None:
-        self.statusbar.showMessage(msg)
+        self.statusbar.showMessage('{t}: {m}'.format(t=timestamp(), m=msg))
 
     def show_query_designer(self):
         self.query_designer = self.query_layout()
@@ -472,10 +478,11 @@ class DatasheetView(QtGui.QWidget):
         self.set_status('{}'.format(msg))
 
     def reset_status(self):
-        self.statusbar.showMessage("")
+        self.set_status('Query results reset')
+        # self.statusbar.showMessage("")
 
     def undo(self):
-        self.set_status('')
+        self.set_status('Changes undone')
         self.model.undo()
 
 
@@ -578,6 +585,8 @@ class MainView(QtGui.QDialog):
 
         self.tabs.currentChanged.connect(self.load_tab)
         self.tabs_loaded = set()
+        if self.tab_indices[0].table_ref.show_on_load:
+            self.load_tab(0)
 
         mainLayout = QtGui.QVBoxLayout()
         menubar = QtGui.QMenuBar()

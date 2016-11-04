@@ -16,7 +16,7 @@ from sortedcontainers import SortedSet
 from config import cfg
 from custom_types import ColumnIndex, SqlDataType
 from query_manager import QueryManager
-from schema import FieldType, Table
+from schema import FieldType, Table, ForeignKey, format_value
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
@@ -39,11 +39,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def add_row(self, ix: QtCore.QModelIndex) -> None:
         dummies = {
-            FieldType.bool: True
-            , FieldType.int: 0
-            , FieldType.float: 0.0
-            , FieldType.str: ''
-            , FieldType.date: '1900-01-01'
+            FieldType.Bool: True
+            , FieldType.Int: 0
+            , FieldType.Float: 0.0
+            , FieldType.Str: ''
+            , FieldType.Date: '1900-01-01'
         }
         dummy_row = []  # type: List
         for fld in self.query_manager.table.fields:
@@ -101,12 +101,12 @@ class AbstractModel(QtCore.QAbstractTableModel):
         totals = []
         fld = self.query_manager.table.fields[col_ix]
         rows = self.rowCount()
-        if fld.dtype == FieldType.float:
+        if fld.dtype == FieldType.Float:
             total = sum(val[col_ix] for val in self.visible_data)
             avg = total / rows if rows > 0 else 0
             totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
             totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
-        elif fld.dtype == FieldType.date:
+        elif fld.dtype == FieldType.Date:
             minimum = min(val[col_ix] for val in self.visible_data)
             maximum = max(val[col_ix] for val in self.visible_data)
             totals.append('{} Min \t = {}'.format(fld.name, minimum or 'Empty'))
@@ -121,11 +121,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def data(self, index: QtCore.QModelIndex, role: int=QtCore.Qt.DisplayRole):
         alignment = {
-            FieldType.bool: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
-            FieldType.date: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
-            FieldType.int: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
-            FieldType.float: QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
-            FieldType.str: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
+            FieldType.Bool: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
+            FieldType.Date: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
+            FieldType.Int: QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter,
+            FieldType.Float: QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter,
+            FieldType.Str: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
         }
         col = index.column()
         fld = self.query_manager.table.fields[col]
@@ -134,15 +134,27 @@ class AbstractModel(QtCore.QAbstractTableModel):
             if not index.isValid():
                 return
             elif role == QtCore.Qt.TextAlignmentRole:
+                if isinstance(fld, ForeignKey):
+                    return QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
                 try:
                     if col in self.foreign_keys.keys():
                         return self.foreign_keys[col][val]
-                    return fld.format_value(val)
-                except:
+                    # return fld.field_format.format_value(
+                    #     data_type=fld.dtype,
+                    #     value=val
+                    # )
+                    return format_value(
+                        field_type=fld.dtype,
+                        value=val,
+                        field_format=fld.field_format
+                    )
+                except Exception as e:
+                    print(str(e))
                     return val
         except Exception as e:
+            print(str(e))
             self.error_signal.emit('Error modeling data: {}'.format(e))
 
     def delete_row(self, ix: QtCore.QModelIndex) -> None:
@@ -156,6 +168,20 @@ class AbstractModel(QtCore.QAbstractTableModel):
         del self.visible_data[row]
         del self.modified_data[mod_row]
         self.dataChanged.emit(ix, ix)
+
+    @property
+    def displayed_data(self):
+        while len(self.visible_data) > self.rows_loaded:
+            self.fetchMore()
+        rows = []
+        for irow in range(self.rowCount()):
+            row = []
+            for icol in range(self.columnCount()):
+                if icol != self.query_manager.table.primary_key_index:
+                    cell = self.data(self.createIndex(irow, icol))
+                    row.append(cell)
+            rows.append(row)
+        return rows
 
     def distinct_values(self, col_ix: ColumnIndex) -> List[str]:
         return SortedSet(

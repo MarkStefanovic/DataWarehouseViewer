@@ -12,6 +12,7 @@ ColumnIndex = NewType('ColumnIndex', int)
 DateString = NewType('DateString', str)
 DimensionName = NewType('DimensionName', str)
 FactName = NewType('FactName', str)
+TableName = NewType('TableName', str)
 ViewName = NewType('ViewName', str)
 FieldName = NewType('FieldName', str)
 ForeignKeyValue = NewType('ForeignKeyValue', int)
@@ -20,7 +21,7 @@ PrimaryKeyIndex = NewType('PrimaryKeyIndex', int)
 SqlDataType = Union[bool, str, int, float, datetime.date, datetime.datetime]
 
 
-class Date(str):
+class DateStr(str):
     def __new__(cls, content) -> DateString:
         if not content:
             return super().__new__(cls, '')
