@@ -2,16 +2,17 @@ from PyQt4 import QtCore, QtGui
 
 
 def convert_to_bool(val):
-    if 'true' in str(val).lower():
+    if not val:  # falsey
+        return False
+    elif 'true' in str(val).lower():
         return True
     elif 'false' in str(val).lower():
         return False
-    elif isinstance(val, int):
-        if val == 0:
+    elif str(val).isnumeric(): #isinstance(val, int):
+        if int(val) == 0:
             return False
         return True
-    else:
-        return val
+    return True # truthy
 
 
 class CheckBoxDelegate(QtGui.QStyledItemDelegate):
@@ -22,27 +23,31 @@ class CheckBoxDelegate(QtGui.QStyledItemDelegate):
         super(CheckBoxDelegate, self).__init__()
 
     def createEditor(self, parent, option, index) -> None:
-        return None
+        return
 
     def paint(self, painter, option, index) -> None:
         """Paint the checkbox."""
-        checked = convert_to_bool(index.data())
-        check_box_style_option = QtGui.QStyleOptionButton()
+        try:
+            checked = convert_to_bool(index.data())
+            check_box_style_option = QtGui.QStyleOptionButton()
 
-        if QtCore.Qt.ItemIsEditable:
+            if QtCore.Qt.ItemIsEditable:
+                check_box_style_option.state |= QtGui.QStyle.State_Enabled
+            else:
+                check_box_style_option.state |= QtGui.QStyle.State_ReadOnly
+
+            if checked:
+                check_box_style_option.state |= QtGui.QStyle.State_On
+            else:
+                check_box_style_option.state |= QtGui.QStyle.State_Off
+
+            check_box_style_option.rect = self.getCheckBoxRect(option)
+
             check_box_style_option.state |= QtGui.QStyle.State_Enabled
-        else:
-            check_box_style_option.state |= QtGui.QStyle.State_ReadOnly
-
-        if checked:
-            check_box_style_option.state |= QtGui.QStyle.State_On
-        else:
-            check_box_style_option.state |= QtGui.QStyle.State_Off
-
-        check_box_style_option.rect = self.getCheckBoxRect(option)
-
-        check_box_style_option.state |= QtGui.QStyle.State_Enabled
-        QtGui.QApplication.style().drawControl(QtGui.QStyle.CE_CheckBox, check_box_style_option, painter)
+            QtGui.QApplication.style().drawControl(QtGui.QStyle.CE_CheckBox, check_box_style_option, painter)
+        except Exception as e:
+            print('error printing checkbox delegate {} for index {} option {}'
+                  .format(str(e), index, option))
 
     def editorEvent(self, event, model, option, index) -> bool:
         """Change the data in the model and the state of the checkbox

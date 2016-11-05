@@ -117,9 +117,18 @@ class DatasheetView(QtGui.QWidget):
         self.btn_undo.clicked.connect(self.undo)
 
     def add_boolean_checkboxes(self):
+        # there is a bug with pyqt where it will error out if a reference is not
+        # maintained on the view to a checkbox delegate when there are multiple
+        # checkbox delegates to display
+        self.checkbox_delegates = {}
         for i, fld in enumerate(self.model.query_manager.table.fields):
             if fld.dtype == FieldType.Bool:
-                self.table.setItemDelegateForColumn(i, CheckBoxDelegate(self.model))
+                try:
+                    chk_box = CheckBoxDelegate(self.model)
+                    self.checkbox_delegates[fld.name] = chk_box
+                    self.table.setItemDelegateForColumn(i, chk_box)
+                except Exception as e:
+                    print('error creating checkbox delegate for field index {}')
 
     def add_foreign_key_comboboxes(self) -> None:
         if self.model.query_manager.table.editable:
@@ -169,7 +178,6 @@ class DatasheetView(QtGui.QWidget):
         pk = self.model.query_manager.table.primary_key_index
         # views don't include the primary key, so we don't try and hide the
         # primary key on views
-        print('pk:', pk)
         if pk >= 0:
             self.table.hideColumn(pk)
 
@@ -570,6 +578,7 @@ class MainView(QtGui.QDialog):
         self.config_popup = None
         self.datasheet_controls = []
         self.query_designer_visibility = True
+        self._current_tab_index = 0
 
         app_name = cfg.app.display_name
 
@@ -613,9 +622,40 @@ class MainView(QtGui.QDialog):
         mainLayout.addWidget(self.tabs)
         self.setLayout(mainLayout)
 
+    def closeEvent(self, QCloseEvent):
+        def changes():
+            changed_tabs = []
+            for ix, tab in self.tab_indices.items():
+                if tab.ds_ref.model.pending_changes:
+                    changed_tabs.append(ix)
+            return changed_tabs
+
+        pending_changes = changes()
+
+        def save_changes():
+            for ix in pending_changes:
+                self.tab_indices[ix].ds_ref.model.save()
+
+        if pending_changes:
+            response = QtGui.QMessageBox.question(
+                self,
+                'Pending changes',
+                "Save pending changes?",
+                QtGui.QMessageBox.Yes,
+                QtGui.QMessageBox.No
+            )
+            if response == QtGui.QMessageBox.Yes:
+                save_changes()
+                QCloseEvent.ignore()
+            else:
+                QCloseEvent.accept()
+        QCloseEvent.accept()
+
+
     @QtCore.pyqtSlot(int)
     def load_tab(self, tab_index: int):
         """If the table is set to show on load, load it the first time the tab is clicked"""
+        self._current_tab_index = tab_index
         pre_load = self.tab_indices[tab_index].table_ref.show_on_load
         if pre_load and tab_index not in self.tabs_loaded:
             # load the tab

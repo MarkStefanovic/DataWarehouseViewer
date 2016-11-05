@@ -14,9 +14,10 @@ from PyQt4 import QtCore
 from sortedcontainers import SortedSet
 
 from config import cfg
-from custom_types import ColumnIndex, SqlDataType
+from custom_types import ColumnIndex, SqlDataType, FieldIndex
 from query_manager import QueryManager
-from schema import FieldType, Table, ForeignKey, format_value, convert_value
+from schema import FieldType, Table, ForeignKey, format_value, convert_value, \
+    Field
 
 
 class AbstractModel(QtCore.QAbstractTableModel):
@@ -141,20 +142,16 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 try:
                     if col in self.foreign_keys.keys():
                         return self.foreign_keys[col][val]
-                    # return fld.field_format.format_value(
-                    #     data_type=fld.dtype,
-                    #     value=val
-                    # )
                     return format_value(
                         field_type=fld.dtype,
                         value=val,
                         field_format=fld.field_format
                     )
                 except Exception as e:
-                    print(str(e))
+                    print('error displaying data {}'.format(str(e)))
                     return val
         except Exception as e:
-            print(str(e))
+            print('error in data method of model: {}'.format(str(e)))
             self.error_signal.emit('Error modeling data: {}'.format(e))
 
     def delete_row(self, ix: QtCore.QModelIndex) -> None:
@@ -188,6 +185,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
             str(self.fk_lookup(col=col_ix, val=row[col_ix]))
             for row in self.visible_data
         )
+
+    def field_by_id(self, ix: FieldIndex) -> Field:
+        return self.query_manager.table.fields[ix]
 
     def filter_equality(self, col_ix: ColumnIndex, val: SqlDataType) -> None:
         self.visible_data = [
@@ -242,11 +242,19 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
 
     def filter_set(self, col: int, values: Set[str]) -> None:
-        self.visible_data = [
-            row for row in self.visible_data
-            if self.fk_lookup(col=col, val=row[col]) in values
-        ]
-        self.filters_changed_signal.emit()
+        try:
+            fld_type = FieldType.Str if col in self.foreign_keys \
+                       else self.field_by_id(col).dtype
+            converter = lambda v: convert_value(field_type=fld_type, value=v)
+            vals = set(map(converter, values))
+            self.visible_data = [
+                row for row in self.visible_data
+                if converter(self.fk_lookup(col=col, val=row[col])) in vals
+            ]
+            self.filters_changed_signal.emit()
+        except Exception as e:
+            print('Error applying checkbox filter for col {}; values {}; err:'
+                  .format(col, values, str(e)))
 
     def flags(self, ix: QtCore.QModelIndex) -> int:
         if ix.column() in self.query_manager.editable_fields_indices:
@@ -281,6 +289,15 @@ class AbstractModel(QtCore.QAbstractTableModel):
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
             return self.query_manager.headers[col]
 
+    @property
+    def pending_changes(self):
+        chg = self.changes
+        if chg:
+            if chg['added'] or chg['deleted'] or chg['updated']:
+                return True
+            return False
+        return False
+
     def pull(self) -> None:
         self.rows_loaded = self.rows_per_page
         self.query_manager.pull()
@@ -308,11 +325,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
         return 0
 
     def save(self) -> Optional[Dict[str, int]]:
-        chg = self.changes
-        if chg['added'] or chg['deleted'] or chg['updated']:
+        if self.pending_changes:
             try:
                 # print('changes:', self.changes)
-                results = self.query_manager.save_changes(chg)
+                results = self.query_manager.save_changes(self.changes)
 
                 def update_id(old_id, new_id):
                     row = next(

@@ -70,7 +70,7 @@ class ExportSqlThread(QtCore.QThread):
                     for i in range(col_ct)
                 }  # type: Dict[int, int]
                 for ix, width in col_specs.items():
-                    sht.col(ix).width = width * 300 #367
+                    sht.col(ix).width = min(width, 30) * 320 #367
             except Exception as e:
                 print('error formatting column widths: {}'.format(str(e)))
 
@@ -106,7 +106,8 @@ class ExportSqlThread(QtCore.QThread):
             if self.stop_everything:
                 return
             t = time.strftime("%Y-%m-%d.%H%M%S")
-            dest = os.path.join(folder, 'tmp_{}_{}.xls'.format(self.table_name, t))
+            tbl_name = self.table_name.replace(' ', '_')
+            dest = os.path.join(folder, 'tmp_{}_{}.xls'.format(tbl_name, t))
             delete_old_outputs(folder)
             wb.save(dest)
             Popen(dest, shell=True)

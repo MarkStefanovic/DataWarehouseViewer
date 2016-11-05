@@ -16,8 +16,11 @@ class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
     def createEditor(self, parent, option, index):
         """Create the ComboBox editor view."""
         self.editor = QtGui.QComboBox(parent)
+        vals_displayed = set()
         for key, val in cfg.foreign_keys(self.dimension).items():
-            self.editor.addItem(val, key)
+            if val not in vals_displayed:
+                self.editor.addItem(val, key)
+                vals_displayed.add(val)
         self.editor.installEventFilter(self)
         return self.editor
 

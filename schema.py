@@ -90,7 +90,7 @@ def convert_value(*,
                 raise ValueError("{v} is not a valid date".format(v=date_val))
             elif isinstance(date_val, datetime.date):
                 return date_val
-            return ''
+            return '' #datetime.datetime(1900, 1, 1).date()
         except Exception as e:
             print("Error converting date value {}; type {}".format(date_val, type(date_val)))
 
@@ -353,7 +353,11 @@ class Table:
 
     def field(self, name: str) -> Field:
         """Look up a field based on it's name on the table."""
-        return next(fld for fld in self.fields if fld.name == name)
+        try:
+            return next(fld for fld in self.fields if fld.name == name)
+        except StopIteration:
+            print('could not find table field named {} on table {}'
+                  .format(name, self.table_name))
 
     @static_property
     def filters(self) -> List[Filter]:
@@ -373,18 +377,32 @@ class Table:
 
     @static_property
     def primary_key(self) -> Field:
-        return next(c for c in self.schema.columns if c.primary_key is True)
+        try:
+            return next(c for c in self.schema.columns if c.primary_key is True)
+        except StopIteration:
+            print('could not find the primary key for table {}'
+                  .format(self.table_name))
 
     @static_property
     def primary_key_index(self) -> PrimaryKeyIndex:
-        return PrimaryKeyIndex(
-            next(i for i, c in enumerate(self.schema.columns) if c.primary_key))
+        try:
+            return PrimaryKeyIndex(
+                next(i for i, c in enumerate(self.schema.columns)
+                     if c.primary_key)
+            )
+        except StopIteration:
+            print('could not find the primary key index for table {}'
+                  .format(self.table_name))
 
     @static_property
     def schema(self) -> sqa.Table:
         """Map table to a sqlalchemy table schema"""
-        cols = [fld.schema for fld in self.fields]
-        return sqa.Table(self.table_name, md, *cols)
+        try:
+            cols = [fld.schema for fld in self.fields]
+            return sqa.Table(self.table_name, md, *cols)
+        except Exception as e:
+            print('Error creating the schema for table {}; error: {}'
+                  .format(self.table_name, str(e)))
 
     def update_row(self, *,
             pk: PrimaryKeyIndex,
@@ -671,7 +689,7 @@ class Star:
             if order_by.field_name in self.summary_fields.keys():
                 fld = self.summary_fields[order_by.field_name]
             else:
-                fld = self.fact.field(order_by.field_name)
+                fld = self.fact.field(order_by.field_name).schema
             if order_by.sort_order == SortOrder.Ascending:
                 return fld.asc()
             return fld.desc()
@@ -683,17 +701,20 @@ class Star:
 
     @property
     def star_query(self):
-        fact = self.fact.schema  # type: sqa.Table
-        star = fact
-        for dim in self.dimensions:
-            star = star.outerjoin(dim.schema)
-        qry = select(fact.columns).select_from(star)
-        for f in [flt for flt in self.filters if flt.value]:
-            qry = qry.where(f.filter)
-        if self.order_by_schema:
-            for o in self.order_by_schema:
-                qry = qry.order_by(o)
-        return qry
+        try:
+            fact = self.fact.schema  # type: sqa.Table
+            star = fact
+            for dim in self.dimensions:
+                star = star.outerjoin(dim.schema)
+            qry = select(fact.columns).select_from(star)
+            for f in [flt for flt in self.filters if flt.value]:
+                qry = qry.where(f.filter)
+            if self.order_by_schema:
+                for o in self.order_by_schema:
+                    qry = qry.order_by(o)
+            return qry
+        except Exception as e:
+            print('error composing star query: {}'.format(str(e)))
 
 
 @autorepr
@@ -759,7 +780,10 @@ class AdditiveField:
 
     @property
     def schema(self):
-        return self.aggregate_func(self.base_field.schema).label(self.display_name)
+        try:
+            return self.aggregate_func(self.base_field.schema).label(self.display_name)
+        except Exception as e:
+            print('error creating aggregate field {}; error: {}')
 
     @log_error
     def validate(self, star: Star):
@@ -899,24 +923,42 @@ class Constellation:
         if self._foreign_keys[dim]:
             return self._foreign_keys[dim]
         self.pull_foreign_keys(dim)
-        return self._foreign_keys[dim]
+        fks = self._foreign_keys[dim]
+        if not 0 in fks:
+            self._foreign_keys[dim][0] = ""
+            fks[0] = ""
+        if not '' in fks:
+            self._foreign_keys[dim][''] = ""
+            fks[''] = ""
+        return fks
 
     def pull_foreign_keys(self, dim: DimensionName) -> None:
-        select_statement = self.foreign_key_lookups[dim]  # type: Select
-        from db import fetch
-        self._foreign_keys[dim] = ValueSortedDict({
-            row[0]: str(row[1])
-            for row in fetch(select_statement)
-        })
+        try:
+            select_statement = self.foreign_key_lookups[dim]  # type: Select
+            from db import fetch
+            self._foreign_keys[dim] = ValueSortedDict({
+                row[0]: str(row[1])
+                for row in fetch(select_statement)
+            })
+        except Exception as e:
+            print('error pulling foreign keys for dimension {}'
+                  .format(dim))
 
     def star(self, fact_table: FactName) -> Star:
         """Return the specific Star system localized on a specific Fact table"""
-        return self.stars[fact_table]
+        try:
+            return self.stars[fact_table]
+        except KeyError:
+            print('The fact table {} could not be found in the cfg global variable.'
+                  .format(fact_table))
 
     def view(self, view_name: ViewName) -> View:
         """Return the specified View"""
-        return next(view for view in self.views if view.display_name == view_name)
-
+        try:
+            return next(view for view in self.views if view.display_name == view_name)
+        except StopIteration:
+            print('A view with the display name {} could not be found in the '
+                  'cfg global variable.'.format(view_name))
 # if __name__ == '__main__':
 #     from config import cfg
 #     print(type(cfg.stars('factSales').fact.schema))

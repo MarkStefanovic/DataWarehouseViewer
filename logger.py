@@ -20,9 +20,12 @@ DEBUG = True
 
 def rotating_log(name: str='main') -> logging.Logger:
     """Return a handle to a logger that messages can be sent to for storage."""
+    folder = os.path.join(rootdir(), 'logs')
+    if not os.path.exists(folder) or not os.path.isdir(folder):
+        os.mkdir(folder)
     fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     formatter = logging.Formatter(fmt)
-    fp = os.path.join(rootdir(), 'logs', 'rotating.log')
+    fp = os.path.join(folder, 'rotating.log')
     file_handler = TimedRotatingFileHandler(
         filename=fp,
         when='D',
