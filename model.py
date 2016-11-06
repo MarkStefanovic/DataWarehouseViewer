@@ -358,6 +358,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 raise
         # else no changes to save, view displays 'no changes' when this function returns None
 
+
     def setData(self, ix: QtCore.QModelIndex, value: SqlDataType, role: int=QtCore.Qt.EditRole) -> bool:
         try:
             value = convert_value(

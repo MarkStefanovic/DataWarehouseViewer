@@ -7,10 +7,10 @@ from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
 
+from cell_editor_delegate import CellEditorDelegate
 from checkbox_delegate import CheckBoxDelegate
 from config import cfg
 from foreign_key_delegate import ForeignKeyDelegate
-from logger import log_error
 from model import AbstractModel
 from schema import Filter, Table, FieldType
 from utilities import delete_old_outputs, rootdir, timestr, timestamp
@@ -52,6 +52,7 @@ class DatasheetView(QtGui.QWidget):
         self.lbl_search = QtGui.QLabel('Quick Search:')
         self.add_foreign_key_comboboxes()
         self.add_boolean_checkboxes()
+        self.add_cell_editors()
 
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
@@ -141,6 +142,19 @@ class DatasheetView(QtGui.QWidget):
                         dimension=dim
                     )
                 )
+
+    def add_cell_editors(self) -> None:
+        if self.model.query_manager.table.editable:
+            self.cell_edit_delegates = {}
+            for ix, fld in enumerate(self.model.query_manager.table.fields):
+                if ix not in self.model.foreign_keys.keys():
+                    delegate = CellEditorDelegate()
+                    self.table.setItemDelegateForColumn(
+                        ix,
+                        delegate
+                    )
+                    self.cell_edit_delegates[ix] = delegate
+
 
     def add_query_criteria(self, filter_ix, value) -> None:
         self.model.query_manager.add_criteria(filter_ix, value)
