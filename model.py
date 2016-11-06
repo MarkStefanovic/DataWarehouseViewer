@@ -99,23 +99,27 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.endInsertRows()
 
     def field_totals(self, col_ix: ColumnIndex) -> list:
-        totals = []
-        fld = self.query_manager.table.fields[col_ix]
-        rows = self.rowCount()
-        if fld.dtype == FieldType.Float:
-            total = sum(val[col_ix] for val in self.visible_data)
-            avg = total / rows if rows > 0 else 0
-            totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
-            totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
-        elif fld.dtype == FieldType.Date:
-            minimum = min(val[col_ix] for val in self.visible_data)
-            maximum = max(val[col_ix] for val in self.visible_data)
-            totals.append('{} Min \t = {}'.format(fld.name, minimum or 'Empty'))
-            totals.append('{} Max \t = {}'.format(fld.name, maximum or 'Empty'))
-        else:
-            totals.append('{} Distinct Count \t = {}'.format(fld.name
-                , len(set(val[col_ix] for val in self.visible_data))))
-        return totals
+        try:
+            totals = []
+            fld = self.query_manager.table.fields[col_ix]
+            rows = self.rowCount()
+            if fld.dtype == FieldType.Float:
+                total = sum(val[col_ix] for val in self.visible_data if val[col_ix])
+                avg = total / rows if rows > 0 else 0
+                totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
+                totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
+            elif fld.dtype == FieldType.Date:
+                minimum = min(val[col_ix] for val in self.visible_data if val[col_ix])
+                maximum = max(val[col_ix] for val in self.visible_data if val[col_ix])
+                totals.append('{} Min \t = {}'.format(fld.name, minimum or 'Empty'))
+                totals.append('{} Max \t = {}'.format(fld.name, maximum or 'Empty'))
+            else:
+                totals.append('{} Distinct Count \t = {}'.format(fld.name
+                    , len(set(val[col_ix] for val in self.visible_data if val[col_ix]))))
+            return totals
+        except Exception as e:
+            print('Error calculating field_totals for column {}; err: {}'
+                  .format(col_ix, str(e)))
 
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
         return len(self.query_manager.table.fields)
@@ -139,17 +143,19 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     return QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
-                try:
-                    if col in self.foreign_keys.keys():
-                        return self.foreign_keys[col][val]
-                    return format_value(
-                        field_type=fld.dtype,
-                        value=val,
-                        field_format=fld.field_format
-                    )
-                except Exception as e:
-                    print('error displaying data {}'.format(str(e)))
-                    return val
+                if val:
+                    try:
+                        if col in self.foreign_keys.keys():
+                            return self.foreign_keys[col][val]
+                        return format_value(
+                            field_type=fld.dtype,
+                            value=val,
+                            field_format=fld.field_format
+                        )
+                    except Exception as e:
+                        print('error displaying data {}'.format(str(e)))
+                        return val
+                return val
         except Exception as e:
             print('error in data method of model: {}'.format(str(e)))
             self.error_signal.emit('Error modeling data: {}'.format(e))
@@ -267,7 +273,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def fk_lookup(self, val, col) -> SqlDataType:
         if col in self.query_manager.table.foreign_keys.keys():
-            return self.foreign_keys[col][val]
+            try:
+                return self.foreign_keys[col][val]
+            except KeyError:
+                return ''
         return val
 
     @property
@@ -381,15 +390,23 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     , key=lambda row: self.fk_lookup(row[col], col)
                 )
             else:
-                self.visible_data = sorted(
-                    self.visible_data
-                    , key=operator.itemgetter(col)
-                )
+                try:
+                    self.visible_data = sorted(
+                        self.visible_data
+                        , key=lambda row: row[col] or 0 #operator.itemgetter(col)
+                    )
+                except Exception as e:
+                    print('could not sort rows by their native data type; err: {}; '
+                          'reverting to sorting by string value'.format(str(e)))
+                    self.visible_data = sorted(
+                        self.visible_data
+                        , key=lambda row: str(row[col] or 0).lower()
+                    )
             if order == QtCore.Qt.DescendingOrder:
                 self.visible_data.reverse()
             self.layoutChanged.emit()
         except Exception as e:
-            err_msg = "Error sorting data: {}".format(e)
+            err_msg = "Error sorting data; col: {} err: {}".format(col, e)
             self.error_signal.emit(err_msg)
 
     def undo(self) -> None:
@@ -411,7 +428,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         """The data as it is displayed to the user
 
         This property is used as the data source for exporting the table"""
-
         pk = self.query_manager.table.primary_key_index
 
         def convert_row(row):

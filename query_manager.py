@@ -90,6 +90,7 @@ class QueryManager(QtCore.QObject):
             self.query_results_signal.emit(processed)
         except Exception as e:
             err_msg = "Error processing results: {}".format(e)
+            print(err_msg)
             self.error_signal.emit(err_msg)
 
     def reset(self) -> None:

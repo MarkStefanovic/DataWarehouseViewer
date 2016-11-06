@@ -320,7 +320,17 @@ cfg = Constellation(
                     base_field_display_name='Title',
                     aggregate_display_name='Books',
                     aggregate_func=func.count
-                )
+                ),
+                AdditiveField(
+                    base_field_display_name='Favorite Scale',
+                    aggregate_display_name='Avg Fav. Score',
+                    aggregate_func=func.avg
+                ),
+                AdditiveField(
+                    base_field_display_name='Owned?',
+                    aggregate_display_name='Books Owned',
+                    aggregate_func=func.sum
+                ),
             ],
             show_on_load=True
         )

@@ -9,14 +9,18 @@ from itertools import chain
 import re
 
 from sortedcollections import ValueSortedDict
-from sqlalchemy import select
-from sqlalchemy import func
+from sqlalchemy import (
+    func,
+    Float,
+    Integer,
+    Numeric,
+    select
+)
 from sqlalchemy.sql import default_comparator  # needed by cx_freeze
 from typing import (
     Dict,
     List,
     Optional,
-    Union
 )
 
 import sqlalchemy as sqa
@@ -101,21 +105,23 @@ def convert_value(*,
         FieldType.Str:   str,
         FieldType.Bool:  bool
     }
-    default_values = {
-        FieldType.Date:  '',
-        FieldType.Float: 0.0,
-        FieldType.Int:   0,
-        FieldType.Str:   '',
-        FieldType.Bool:  False
-    }
+    # default_values = {
+    #     FieldType.Date:  None,
+    #     FieldType.Float: 0.0,
+    #     FieldType.Int:   '',
+    #     FieldType.Str:   '',
+    #     FieldType.Bool:  False
+    # }
     try:
         if not value:
-            return default_values[field_type]
+            # We need to return None instead of an empty string or 0 in the
+            # case of a date field.
+            return None #return default_values[field_type]
         return conversion_functions[field_type](value)
     except Exception as e:
         print('Error converting value {} to data type {}; err:'
             .format(value, field_type, str(e)))
-        return default_values[field_type]
+        return None #default_values[field_type]
 
 
 def format_value(*,
@@ -148,18 +154,19 @@ def format_value(*,
         FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 2)),
         FieldFormat.Str:        lambda val: val
     }
-    default_display_values = {
-        FieldType.Bool: False,
-        FieldType.Float: 0.0,
-        FieldType.Date: datetime.datetime(1900, 1, 1).date(),
-        FieldType.Int: 0,
-        FieldType.Str: ''
-    }
+    # default_display_values = {
+    #     FieldType.Bool: False,
+    #     FieldType.Float: 0.0,
+    #     FieldType.Date: None, #datetime.datetime(1900, 1, 1).date(),
+    #     FieldType.Int: '',
+    #     FieldType.Str: ''
+    # }
     # this value is also saved to the db on empty inputs
-    default_value = default_display_values[data_type]
-    val = convert_value(field_type=data_type, value=value) if value else default_value
     try:
-        return formatters[format](val)
+        if value:
+            val = convert_value(field_type=data_type, value=value)
+            return formatters[format](val)
+        return None #default_display_values[data_type]
     except Exception as e:
         print(
             'error formatting value,',
@@ -742,14 +749,27 @@ class AdditiveField:
     def base_field(self) -> Field:
         if not self.star:
             raise Exception('AdditiveField must be assigned a star before use.')
-        return self.star.fields[self.base_field_display_name]
+        try:
+            return self.star.fields[self.base_field_display_name]
+        except KeyError:
+            print('Error creating additive field {}; '
+                  'unable to find base field named {}'
+                  .format(self.display_name, self.base_field_display_name))
 
     @property
     def dtype(self):
         """Mimic field property"""
-        if self.aggregate_func._FunctionGenerator__names == ['count']:
-            return FieldType.Int
-        return self.base_field.dtype
+        dtypes = {
+            'count': FieldType.Int,
+            'avg': FieldType.Float,
+            'sum': FieldType.Float
+        }
+        try:
+            return dtypes[self.sqa_func]
+        except KeyError:
+            print('Unable to find data type of AdditiveField {}'
+                  .format(self.display_name))
+            return self.base_field.dtype
 
     @property
     def editable(self):
@@ -781,9 +801,31 @@ class AdditiveField:
     @property
     def schema(self):
         try:
-            return self.aggregate_func(self.base_field.schema).label(self.display_name)
+            return self.aggregate_func(self.base_field.schema)\
+                   .cast(self.sqa_dtype).label(self.display_name)
         except Exception as e:
             print('error creating aggregate field {}; error: {}')
+
+    @property
+    def sqa_dtype(self):
+        lkp = {
+            'avg': Float(14, 2),
+            'count': Integer,
+            'sum': Float(14, 2)
+        }
+        try:
+            return lkp[self.sqa_func]
+        except KeyError:
+            print('Unable to find sqa_dtype for AdditiveField {} sqa_func {}'
+                  .format(self.display_name, self.sqa_func))
+
+    @property
+    def sqa_func(self) -> str:
+        try:
+            return self.aggregate_func._FunctionGenerator__names[0]
+        except KeyError:
+            print('Error looking up sqa_func for AdditiveField {}'
+                  .format(self.display_name))
 
     @log_error
     def validate(self, star: Star):

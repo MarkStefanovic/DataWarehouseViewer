@@ -12,6 +12,7 @@ from sqlalchemy.sql import Delete, Insert, Update
 from config import cfg
 from logger import log_error
 
+
 engine = create_engine(cfg.app.db_path, echo=False)
 
 
@@ -24,8 +25,12 @@ class Transaction:
         self.rows_updated = 0
 
     def execute(self, cmd: Union[Delete, Insert, Update]):
-        from sqlalchemy.dialects import sqlite
-        print(cmd.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+        try:
+            from sqlalchemy.dialects import sqlite
+            print(cmd.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+        except Exception as e:
+            print("Unable to compose sql statement: cmd {}; err {}"
+                  .format(str(cmd), str(e)))
         try:
             result = self.connection.execute(cmd)
             if type(cmd) == Delete:
