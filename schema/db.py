@@ -9,7 +9,7 @@ from sqlalchemy.sql import Select
 from sqlalchemy import create_engine
 from sqlalchemy.sql import Delete, Insert, Update
 
-from config import cfg
+from schema.config import cfg
 from logger import log_error
 
 
@@ -57,28 +57,8 @@ class Transaction:
             'rows_updated': self.rows_updated
         }
 
-'''
-@log_error
-def execute(cmd) -> int:
-    con = engine.connect()
-    try:
-        # from sqlalchemy.dialects import sqlite
-        # print(cmd.compile(dialect=sqlite.dialect()))
-        result = con.execute(cmd)
-        if type(cmd) == Delete:
-            return 0
-        elif type(cmd) == Insert:
-            return result.inserted_primary_key
-        elif type(cmd) == Update:
-            return 0
-        return 0
-    except:
-        raise
-    finally:
-        con.close()
-'''
 
-@log_error
+# @log_error
 def fetch(qry: Select) -> List[str]:
     con = engine.connect()
     try:
@@ -91,7 +71,7 @@ def fetch(qry: Select) -> List[str]:
         con.close()
 
 
-@log_error
+# @log_error
 def iterrows(cmd) -> Generator:
     con = engine.connect()
     for row in con.execute(cmd):

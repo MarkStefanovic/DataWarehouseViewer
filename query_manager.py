@@ -6,15 +6,21 @@ from typing import Dict, List, Tuple
 
 from PyQt4 import QtCore
 
-from config import cfg
-from custom_types import TableName
-from db import Transaction
+from schema.config import cfg
+from schema.custom_types import TableName
+from schema.db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema import Fact, Table, Dimension, View, convert_value, format_value
+from schema.fact import Fact
+from schema.field import Field
+from schema.table import Table
+from schema.dimension import Dimension
+from schema.view import View
+from schema.munge import convert_value, format_value
+
 from sqlalchemy import Table
-from utilities import static_property
+from schema.utilities import static_property
 
 
 class QueryManager(QtCore.QObject):
@@ -30,15 +36,10 @@ class QueryManager(QtCore.QObject):
         self.runner = QueryRunner()
 
         self.table = table
-        self.star = cfg.star(self.table.table_name) \
-            if isinstance(self.table, Fact) \
-            else None
-        self.view = cfg.view(self.table.display_name) \
-            if isinstance(self.table, View) \
-            else None
+        self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
+        self.view = cfg.view(self.table.display_name) if isinstance(self.table, View) else None
 
         self.filters = self.star.filters if self.star else self.table.filters
-        self.headers = [fld.display_name for fld in self.table.fields]
 
     #   Connect Signals
         self.runner.signals.results.connect(self.process_results)
@@ -52,17 +53,22 @@ class QueryManager(QtCore.QObject):
         if self.table.editable:
             return [
                 i for i, fld
-                in enumerate(self.table.fields)
+                in enumerate(self.fields)
                 if i != self.table.primary_key_index
+                    and self.fields[i].editable
             ]
         return []
 
     def get_field_index(self, name: str) -> int:
         return min(
             i for i, fld
-            in enumerate(self.table.fields)
+            in enumerate(self.fields)
             if fld.name == name
         )
+
+    @static_property
+    def headers(self):
+        return [fld.display_name for fld in self.fields]
 
     def export(self, *,
             rows: List[List[str]],
@@ -70,6 +76,15 @@ class QueryManager(QtCore.QObject):
             table_name: TableName
     ) -> None:
         self.exporter.start_export(rows=rows, header=header, table_name=table_name)
+
+    @static_property
+    def fields(self) -> List[Field]:
+        if self.view:
+            return self.view.fields
+        elif self.star:
+            return self.star.fields
+        else:
+            return self.table.fields
 
     def pull(self) -> None:
         self.runner.run_sql(query=self.sql_display)
@@ -82,15 +97,21 @@ class QueryManager(QtCore.QObject):
             for r, row in enumerate(results):
                 processed.append(list(row))
                 for c, col in enumerate(row):
-                    field_type = self.table.fields[c].dtype
-                    processed[r][c] = convert_value(
-                        field_type=field_type,
-                        value=col
-                    )
+                    try:
+                        field_type = self.fields[c].dtype
+                        processed[r][c] = convert_value(
+                            field_type=field_type,
+                            value=col
+                        )
+                    except Exception as e:
+                        print('Error converting value {}, row {}, col {}, err {}'
+                              .format(col, r, c, str(e)))
+                        processed[r][c] = col
             self.query_results_signal.emit(processed)
         except Exception as e:
             err_msg = "Error processing results: {}".format(e)
             print(err_msg)
+            print('results that errors:', results[:5])
             self.error_signal.emit(err_msg)
 
     def reset(self) -> None:

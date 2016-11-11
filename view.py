@@ -3,16 +3,20 @@
 from collections import namedtuple, OrderedDict
 from functools import partial
 import os
+from itertools import chain
+
 from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
 
 from cell_editor_delegate import CellEditorDelegate
 from checkbox_delegate import CheckBoxDelegate
-from config import cfg
+from schema.config import cfg
 from foreign_key_delegate import ForeignKeyDelegate
 from model import AbstractModel
-from schema import Filter, Table, FieldType
+from schema.filter import Filter
+from schema.table import Table
+from schema.custom_types import FieldType
 from utilities import delete_old_outputs, rootdir, timestr, timestamp
 
 
@@ -126,28 +130,35 @@ class DatasheetView(QtGui.QWidget):
             if fld.dtype == FieldType.Bool:
                 try:
                     chk_box = CheckBoxDelegate(self.model)
-                    self.checkbox_delegates[fld.name] = chk_box
+                    self.checkbox_delegates[i] = chk_box
                     self.table.setItemDelegateForColumn(i, chk_box)
                 except Exception as e:
                     print('error creating checkbox delegate for field index {}')
 
     def add_foreign_key_comboboxes(self) -> None:
+        self.foreign_key_delegates = {}
         if self.model.query_manager.table.editable:
             for key, val in self.model.foreign_keys.items():
                 dim = self.model.query_manager.table.foreign_keys[key].dimension
+                delegate = ForeignKeyDelegate(
+                    model=self.model,
+                    dimension=dim
+                )
                 self.table.setItemDelegateForColumn(
                     key,
-                    ForeignKeyDelegate(
-                        model=self.model,
-                        dimension=dim
-                    )
+                    delegate
                 )
+                self.foreign_key_delegates[key] = delegate
 
     def add_cell_editors(self) -> None:
+        """This method must be called after the foreign key and checkbox
+        delegates have been instantiated"""
+        self.cell_edit_delegates = {}
+        current_delegates = set(chain(self.foreign_key_delegates.keys(),
+                                      self.checkbox_delegates.keys()))
         if self.model.query_manager.table.editable:
-            self.cell_edit_delegates = {}
             for ix, fld in enumerate(self.model.query_manager.table.fields):
-                if ix not in self.model.foreign_keys.keys():
+                if ix not in current_delegates:
                     delegate = CellEditorDelegate()
                     self.table.setItemDelegateForColumn(
                         ix,
@@ -550,7 +561,7 @@ class QueryDesigner(QtGui.QWidget):
         self.add_criteria_signal.emit(filter_ix, value)
 
     def create_controls(self) -> None:
-        for f in self.filters[:10]:  # cap at 10 maximum filter input boxes
+        for f in self.filters[:20]:  # cap at 20 maximum filter input boxes
             self.add_row(f)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')

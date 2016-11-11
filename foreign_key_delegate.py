@@ -1,6 +1,6 @@
 from PyQt4 import QtCore, QtGui
 
-from config import cfg
+from schema.config import cfg
 
 
 class ForeignKeyDelegate(QtGui.QStyledItemDelegate):

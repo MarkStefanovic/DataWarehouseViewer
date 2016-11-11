@@ -13,12 +13,15 @@ from typing import (
 from PyQt4 import QtCore
 from sortedcontainers import SortedSet
 
-from config import cfg
-from custom_types import ColumnIndex, SqlDataType, FieldIndex
+from schema.config import cfg
+from schema.custom_types import ColumnIndex, SqlDataType, FieldIndex
 from query_manager import QueryManager
-from schema import FieldType, Table, ForeignKey, format_value, convert_value, \
-    Field
 
+from schema.custom_types import FieldType
+from schema.table import Table
+from schema.foreign_key import ForeignKey
+from schema.munge import format_value, convert_value
+from schema.field import Field
 
 class AbstractModel(QtCore.QAbstractTableModel):
     filters_changed_signal = QtCore.pyqtSignal()
@@ -41,16 +44,17 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def add_row(self, ix: QtCore.QModelIndex) -> None:
         dummies = {
             FieldType.Bool: True
-            , FieldType.Int: 0
-            , FieldType.Float: 0.0
+            , FieldType.Int: None  #0
+            , FieldType.Float: 0.00
             , FieldType.Str: ''
-            , FieldType.Date: '1900-01-01'
+            , FieldType.Date: None #'1900-01-01'
         }
         dummy_row = []  # type: List
-        for fld in self.query_manager.table.fields:
+        for fld in self.query_manager.fields:
             dummy_row.append(dummies[fld.dtype])
         for k, v in self.query_manager.table.foreign_keys.items():
-            dummy_row[k] = next(fk for fk in self.foreign_keys[k])
+            # dummy_row[k] = next(fk for fk in self.foreign_keys[k])
+            dummy_row[k] = None #next(fk for fk in self.foreign_keys[k])
         dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
         self.beginInsertRows(QModelIndex(), 0, 0)
         self.visible_data.insert(ix.row() + 1, dummy_row)
@@ -101,7 +105,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def field_totals(self, col_ix: ColumnIndex) -> list:
         try:
             totals = []
-            fld = self.query_manager.table.fields[col_ix]
+            fld = self.query_manager.fields[col_ix]
             rows = self.rowCount()
             if fld.dtype == FieldType.Float:
                 total = sum(val[col_ix] for val in self.visible_data if val[col_ix])
@@ -122,7 +126,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                   .format(col_ix, str(e)))
 
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
-        return len(self.query_manager.table.fields)
+        return len(self.query_manager.fields)
 
     def data(self, index: QtCore.QModelIndex, role: int=QtCore.Qt.DisplayRole):
         alignment = {
@@ -133,7 +137,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             FieldType.Str: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
         }
         col = index.column()
-        fld = self.query_manager.table.fields[col]
+        fld = self.query_manager.fields[col]
         val = self.visible_data[index.row()][col]
         try:
             if not index.isValid():
@@ -193,7 +197,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         )
 
     def field_by_id(self, ix: FieldIndex) -> Field:
-        return self.query_manager.table.fields[ix]
+        return self.query_manager.fields[ix]
 
     def filter_equality(self, col_ix: ColumnIndex, val: SqlDataType) -> None:
         self.visible_data = [
@@ -358,11 +362,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 raise
         # else no changes to save, view displays 'no changes' when this function returns None
 
-
     def setData(self, ix: QtCore.QModelIndex, value: SqlDataType, role: int=QtCore.Qt.EditRole) -> bool:
         try:
             value = convert_value(
-                field_type=self.query_manager.table.fields[ix.column()].dtype,
+                field_type=self.query_manager.fields[ix.column()].dtype,
                 value=value
             )
         except:
@@ -411,10 +414,13 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.error_signal.emit(err_msg)
 
     def undo(self) -> None:
-        self.layoutAboutToBeChanged.emit()
-        self.modified_data = deepcopy(self.original_data)
-        self.visible_data = deepcopy(self.original_data)
-        self.layoutChanged.emit()
+        if self.pending_changes:
+            self.layoutAboutToBeChanged.emit()
+            self.modified_data = deepcopy(self.original_data)
+            self.visible_data = deepcopy(self.original_data)
+            self.layoutChanged.emit()
+        else:
+            self.error_signal.emit('No changes to undo')
 
     @QtCore.pyqtSlot(list)
     def update_view(self, results) -> None:
