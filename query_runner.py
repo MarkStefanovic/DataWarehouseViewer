@@ -1,7 +1,7 @@
 from PyQt4 import QtCore
 import time
 
-from schema.db import fetch
+from star_schema.db import fetch
 from logger import log_error
 
 

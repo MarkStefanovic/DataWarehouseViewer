@@ -7,10 +7,10 @@ from enum import unique, Enum
 
 from typing import (
     NewType,
-    Union
-)
+    Union,
+    Optional)
 
-from schema.utilities import autorepr
+from star_schema.utilities import autorepr
 
 ColumnIndex = NewType('ColumnIndex', int)
 DateString = NewType('DateString', str)
@@ -125,3 +125,14 @@ class HorizontalAlignment(Enum):
     Center = 1
     Left = 2
     Right = 3
+
+
+@autorepr
+class FilterConfig:
+    """This class serves as a temporary holding tank for would-be Filter configs"""
+    def __init__(self, *,
+            operator: Operator,
+            default_value: Optional[SqlDataType]=''
+    ) -> None:
+        self.default_value = default_value
+        self.operator = operator

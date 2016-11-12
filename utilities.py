@@ -6,7 +6,12 @@ import re
 import sys
 import time
 
-from typing import Any, Generator, NamedTuple, Sequence
+from typing import (
+    Any,
+    Generator,
+    NamedTuple,
+    Sequence
+)
 
 
 def cache(func):
@@ -48,8 +53,10 @@ def delete_old_outputs(path: str):
                 except:
                     pass
 
+
 def timestamp() -> str:
     return time.strftime('%I:%M:%S %p')
+
 
 def timestr() -> str:
     return time.strftime("%H:%M:%S")
@@ -59,38 +66,6 @@ def files_in_folder(folder: str, prefix: str=None) -> list:
     if prefix:
         return sorted([os.path.abspath(fp) for fp in os.listdir(folder) if fp.startswith(prefix)])
     return sorted([os.path.abspath(fp) for fp in os.listdir(folder)])
-
-
-class DictToClassRepr:
-    """Return a nested class representation of a dictionary.
-
-    Examples:
-        >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
-        >>> o = DictToClassRepr(d)
-        >>> o.c.e
-        5
-
-        >>> d = {'a': 1, 'b': [1, 2, 3], 'c': {'d': 4, 'e': 5}}
-        >>> o = DictToClassRepr(d)
-        >>> o.b
-        [1, 2, 3]
-    """
-    def __init__(self, dictionary):
-        for key, val in dictionary.items():
-            if isinstance(val, (list, tuple)):
-                setattr(
-                    self
-                    , key
-                    , [DictToClassRepr(x)
-                        if isinstance(x, dict)
-                        else x for x in val]
-                )
-            else:
-                setattr(
-                    self
-                    , key
-                    , DictToClassRepr(val) if isinstance(val, dict) else val
-                )
 
 
 def rootdir() -> str:

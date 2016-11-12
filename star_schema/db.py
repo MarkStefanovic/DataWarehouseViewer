@@ -2,23 +2,42 @@
 
 All of the code in other modules interfaces with the database through the
 classes and functions in this module."""
+from typing import (
+    Dict,
+    List,
+    Union
+)
 
-from typing import Dict, Generator, List, Union
-
-from sqlalchemy.sql import Select
 from sqlalchemy import create_engine
-from sqlalchemy.sql import Delete, Insert, Update
+from sqlalchemy_utils import database_exists
+from sqlalchemy.sql import (
+    Delete,
+    Insert,
+    Select,
+    Update
+)
 
-from schema.config import cfg
+from star_schema.config import cfg, ConfigError
 from logger import log_error
 
 
-engine = create_engine(cfg.app.db_path, echo=False)
+def get_engine():
+    engine = create_engine(cfg.app.db_path, echo=False)
+    if not database_exists(engine.url):
+        if 'sqlite' in cfg.app.db_path:
+            from star_schema import md
+            md.create_all(engine)
+        else:
+            raise ConfigError('The database at path {} could not be found.'
+                              .format(cfg.app.db_path))
+    return engine
+
+eng = get_engine()
 
 
 class Transaction:
     def __init__(self) -> None:
-        self.connection = engine.connect()
+        self.connection = eng.connect()
         self.transaction = self.connection.begin()
         self.rows_added = 0
         self.rows_deleted = 0
@@ -58,9 +77,9 @@ class Transaction:
         }
 
 
-# @log_error
+@log_error
 def fetch(qry: Select) -> List[str]:
-    con = engine.connect()
+    con = eng.connect()
     try:
         from sqlalchemy.dialects import sqlite
         print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
@@ -70,10 +89,3 @@ def fetch(qry: Select) -> List[str]:
     finally:
         con.close()
 
-
-# @log_error
-def iterrows(cmd) -> Generator:
-    con = engine.connect()
-    for row in con.execute(cmd):
-        yield row
-    con.close()

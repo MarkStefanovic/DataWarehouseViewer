@@ -2,25 +2,26 @@
 
 """
 from sqlalchemy.sql import Select
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from PyQt4 import QtCore
 
-from schema.config import cfg
-from schema.custom_types import TableName
-from schema.db import Transaction
+from star_schema.config import cfg
+from star_schema.custom_types import TableName
+from star_schema.db import Transaction
 from query_exporter import QueryExporter
 from logger import log_error
 from query_runner import QueryRunner
-from schema.fact import Fact
-from schema.field import Field
-from schema.table import Table
-from schema.dimension import Dimension
-from schema.view import View
-from schema.munge import convert_value, format_value
+from star_schema.constellation import (
+    Fact,
+    Field,
+    Filter,
+    Table,
+    View
+)
+from star_schema.constellation import convert_value
 
-from sqlalchemy import Table
-from schema.utilities import static_property
+from star_schema.utilities import static_property
 
 
 class QueryManager(QtCore.QObject):
@@ -47,6 +48,15 @@ class QueryManager(QtCore.QObject):
     def add_criteria(self, filter_ix: int, value: str) -> None:
         """Accept a string with a type and convert it into a where condition"""
         self.filters[filter_ix].value = value
+
+    @static_property
+    def base(self):
+        if self.view:
+            return self.view
+        elif self.star:
+            return self.star
+        else:
+            return self.table
 
     @static_property
     def editable_fields_indices(self) -> List[int]:
@@ -79,12 +89,14 @@ class QueryManager(QtCore.QObject):
 
     @static_property
     def fields(self) -> List[Field]:
-        if self.view:
-            return self.view.fields
-        elif self.star:
-            return self.star.fields
-        else:
-            return self.table.fields
+        return self.base.fields
+
+    @static_property
+    def filters_by_name(self) -> Optional[Dict[str, Filter]]:
+        return {
+            flt.display_name: flt
+            for flt in self.base.filters
+        }
 
     def pull(self) -> None:
         self.runner.run_sql(query=self.sql_display)

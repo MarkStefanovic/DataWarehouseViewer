@@ -11,12 +11,15 @@ from PyQt4 import QtCore, QtGui
 
 from cell_editor_delegate import CellEditorDelegate
 from checkbox_delegate import CheckBoxDelegate
-from schema.config import cfg
+from star_schema.config import cfg
 from foreign_key_delegate import ForeignKeyDelegate
 from model import AbstractModel
-from schema.filter import Filter
-from schema.table import Table
-from schema.custom_types import FieldType
+from star_schema.constellation import (
+    Filter,
+    Table,
+    FieldType,
+    View
+)
 from utilities import delete_old_outputs, rootdir, timestr, timestamp
 
 
@@ -541,11 +544,13 @@ class QueryDesigner(QtGui.QWidget):
         self.layout.setColumnMinimumWidth(1, 120)
         self.setLayout(self.layout)
         self.query_controls = {}
+        self.filter_refs = {}
         self.create_controls()
 
     def add_row(self, filter: Filter) -> None:
         lbl = QtGui.QLabel(filter.display_name)
         txt = QtGui.QLineEdit()
+        self.filter_refs[filter.display_name] = txt
         self.query_controls[self._current_row] = txt
 
         self.layout.addWidget(lbl, self._current_row, 0, 1, 1)
@@ -604,6 +609,7 @@ class MainView(QtGui.QDialog):
         self.datasheet_controls = []
         self.query_designer_visibility = True
         self._current_tab_index = 0
+        self.tab_filters_loaded = set()
 
         app_name = cfg.app.display_name
 
@@ -623,6 +629,8 @@ class MainView(QtGui.QDialog):
         self.tabs_loaded = set()
         if self.tab_indices[0].table_ref.show_on_load:
             self.load_tab(0)
+
+
 
         mainLayout = QtGui.QVBoxLayout()
         menubar = QtGui.QMenuBar()
@@ -676,16 +684,36 @@ class MainView(QtGui.QDialog):
                 QCloseEvent.accept()
         QCloseEvent.accept()
 
+    def apply_default_filters(self, tab_index: int) -> None:
+        if tab_index not in self.tab_filters_loaded:
+            tab = self.tab_indices[tab_index]
+            ds = tab.ds_ref
+            filters = ds.model.query_manager.filters_by_name
+            for filter_name, txt_box in ds.query_designer.filter_refs.items():
+                try:
+                    flt = filters[filter_name]
+                    val = flt.default_value
+                    if not txt_box.text():
+                        txt_box.setText(val)
+                except Exception as e:
+                    print('error applying default filter {}; err:'
+                          .format(filter_name, str(e)))
+            self.tab_filters_loaded.add(tab_index)
 
     @QtCore.pyqtSlot(int)
     def load_tab(self, tab_index: int):
         """If the table is set to show on load, load it the first time the tab is clicked"""
         self._current_tab_index = tab_index
+        self.apply_default_filters(tab_index)
         pre_load = self.tab_indices[tab_index].table_ref.show_on_load
         if pre_load and tab_index not in self.tabs_loaded:
             # load the tab
-            self.tab_indices[tab_index].ds_ref.query_designer.pull_signal.emit()
-            self.tabs_loaded.add(tab_index)
+            ds = self.tab_indices[tab_index].ds_ref
+            base = ds.model.query_manager.base
+            ds.query_designer.pull_signal.emit()
+            if not isinstance(base, View):
+                # we want the view to reload everytime we open it
+                self.tabs_loaded.add(tab_index)
 
     def open_output_folder(self):
         folder = os.path.join(rootdir(), 'output')

@@ -1,21 +1,24 @@
 from sqlalchemy import func
 
-from schema.additive_field import AdditiveField
-from schema.calculated_field import CalculatedField
-from schema.constellation import Constellation
-from schema.dimension import Dimension
-from schema.fact import Fact
-from schema.field import Field
-from schema.custom_types import (
+from star_schema.constellation import (
+    AdditiveField,
+    CalculatedField,
+    Constellation,
+    Dimension,
+    Fact,
+    Field,
+    ForeignKey,
+    SummaryField,
+    View,
+)
+from star_schema.custom_types import (
     FieldFormat,
     FieldType,
+    FilterConfig,
     Operator,
     OrderBy,
     SortOrder
 )
-from schema.foreign_key import ForeignKey
-from schema.summary_field import SummaryField
-from schema.view import View
 
 
 class ConfigError(Exception):
@@ -382,20 +385,29 @@ cfg = Constellation(
                     name='ProductName',
                     dtype=FieldType.Str,
                     display_name='Name',
-                    filter_operators=[Operator.str_like]
+                    filters=[
+                        FilterConfig(operator=Operator.str_like,
+                                     default_value='')
+                    ]
                 ),
                 Field(
                     name='ProductCategory',
                     dtype=FieldType.Str,
                     display_name='Category',
-                    filter_operators=[Operator.str_like]
+                    filters=[
+                        FilterConfig(operator=Operator.str_like,
+                                     default_value='')
+                    ]
                 )
             ],
             summary_field=SummaryField(
                 display_fields=['ProductName', 'ProductCategory'],
                 display_name='Product',
                 separator=' - ',
-                filter_operators=[Operator.str_like]
+                filters=[
+                    FilterConfig(operator=Operator.str_like,
+                                 default_value=''),
+                ]
             ),
             order_by=[
                 OrderBy(
@@ -420,20 +432,29 @@ cfg = Constellation(
                     name='CustomerName',
                     dtype=FieldType.Str,
                     display_name='Customer Name',
-                    filter_operators=[Operator.str_like]
+                    filters=[
+                        FilterConfig(operator=Operator.str_like,
+                                     default_value='Mark')
+                    ]
                 ),
                 Field(
                     name='ShippingAddress',
                     dtype=FieldType.Str,
                     display_name='Shipping Address',
-                    filter_operators=[Operator.str_like]
+                    filters=[
+                        FilterConfig(operator=Operator.str_like,
+                                     default_value='')
+                    ]
                 ),
             ],
             summary_field=SummaryField(
                 display_fields=['CustomerName'],
                 display_name='Customer',
                 separator=' - ',
-                filter_operators=[Operator.str_like]
+                filters=[
+                    FilterConfig(operator=Operator.str_like,
+                                 default_value='')
+                ]
             ),
             order_by=[
                 OrderBy(
@@ -473,18 +494,22 @@ cfg = Constellation(
                     name='OrderDate',
                     dtype=FieldType.Date,
                     display_name='Order Date',
-                    filter_operators=[
-                        Operator.date_on_or_after,
-                        Operator.date_on_or_before,
+                    filters=[
+                        FilterConfig(operator=Operator.date_on_or_before,
+                                     default_value=''),
+                        FilterConfig(operator=Operator.date_on_or_after,
+                                     default_value='2015-01-01'),
                     ]
                 ),
                 Field(
                     name='ShippingDate',
                     dtype=FieldType.Date,
                     display_name='Shipping Date',
-                    filter_operators=[
-                        Operator.date_on_or_after,
-                        Operator.date_on_or_before,
+                    filters=[
+                        FilterConfig(operator=Operator.date_on_or_before,
+                                     default_value=''),
+                        FilterConfig(operator=Operator.date_on_or_after,
+                                     default_value='2015-01-01'),
                     ]
                 ),
                 Field(
@@ -492,8 +517,9 @@ cfg = Constellation(
                     dtype=FieldType.Float,
                     display_name='Sales Amount',
                     field_format=FieldFormat.Accounting,
-                    filter_operators=[
-                        Operator.number_equals
+                    filters=[
+                        FilterConfig(operator=Operator.number_greater_than_or_equal_to,
+                                     default_value='0.00')
                     ]
                 ),
                 Field(
@@ -501,8 +527,7 @@ cfg = Constellation(
                     dtype=FieldType.Bool,
                     display_name='Paid',
                     field_format=FieldFormat.Str,
-                    filter_operators=[
-                    ]
+                    filters=[]
                 ),
             ],
             calculated_fields=[

@@ -7,7 +7,7 @@ from typing import List, Dict
 from PyQt4 import QtCore
 import xlwt
 
-from schema.custom_types import TableName
+from star_schema.custom_types import TableName
 from logger import log_error
 from utilities import delete_old_outputs
 

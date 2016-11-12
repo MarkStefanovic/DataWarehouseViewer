@@ -1,5 +1,4 @@
 from copy import deepcopy
-import operator
 from functools import partial
 import uuid
 
@@ -13,15 +12,18 @@ from typing import (
 from PyQt4 import QtCore
 from sortedcontainers import SortedSet
 
-from schema.config import cfg
-from schema.custom_types import ColumnIndex, SqlDataType, FieldIndex
+from star_schema.config import cfg
+from star_schema.custom_types import ColumnIndex, SqlDataType, FieldIndex
 from query_manager import QueryManager
 
-from schema.custom_types import FieldType
-from schema.table import Table
-from schema.foreign_key import ForeignKey
-from schema.munge import format_value, convert_value
-from schema.field import Field
+from star_schema.custom_types import FieldType
+from star_schema.constellation import (
+    Table,
+    ForeignKey,
+    Field
+)
+from star_schema.constellation import format_value, convert_value
+
 
 class AbstractModel(QtCore.QAbstractTableModel):
     filters_changed_signal = QtCore.pyqtSignal()
