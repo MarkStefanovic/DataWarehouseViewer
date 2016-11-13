@@ -149,19 +149,19 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     return QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
-                if val:
-                    try:
-                        if col in self.foreign_keys.keys():
-                            return self.foreign_keys[col][val]
-                        return format_value(
-                            field_type=fld.dtype,
-                            value=val,
-                            field_format=fld.field_format
-                        )
-                    except Exception as e:
-                        print('error displaying data {}'.format(str(e)))
-                        return val
-                return val
+                if val is None:
+                    return None
+                try:
+                    if col in self.foreign_keys.keys():
+                        return self.foreign_keys[col][val]
+                    return format_value(
+                        field_type=fld.dtype,
+                        value=val,
+                        field_format=fld.field_format
+                    )
+                except Exception as e:
+                    print('error displaying data {}'.format(str(e)))
+                    return val
         except Exception as e:
             print('error in data method of model: {}'.format(str(e)))
             self.error_signal.emit('Error modeling data: {}'.format(e))
