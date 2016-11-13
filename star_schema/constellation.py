@@ -1,6 +1,7 @@
 import datetime
 from collections import ChainMap
 from itertools import chain
+from math import isinf, isnan
 import re
 
 from functools import reduce
@@ -70,26 +71,41 @@ def convert_value(*,
         field_type: FieldType,
         value: Optional[SqlDataType]=None
     ) -> SqlDataType:
-
     """Convert a string value to a Python data type
 
     This conversion function is used to translate user input to a form that
     sqlalchemy can use."""
-    def convert_date(date_val: Optional[str]='1900-01-01'):
+    default_values = {
+        FieldType.Int: 0,
+        FieldType.Str: '',
+        FieldType.Float: 0.0,
+        FieldType.Bool: False,
+        FieldType.Date: None
+    }
+
+    if not value:
+        return default_values[field_type]
+
+    def convert_date(date_val):
         try:
             if not date_val:
-                return datetime.datetime(1900, 1, 1).date()
+                return
             if isinstance(date_val, str):
                 if date_str_pattern.match(date_val):
                     return datetime.datetime.strptime(date_val[:10], "%Y-%m-%d").date()
-                raise ValueError("{v} is not a valid date".format(v=date_val))
+                print("{v} is not a valid date".format(v=date_val))
+                return
+                # raise ValueError("{v} is not a valid date".format(v=date_val))
             elif isinstance(date_val, datetime.date):
                 return date_val
-            return '' #datetime.datetime(1900, 1, 1).date()
+            elif isinstance(date_val, datetime.datetime):
+                return date_val.date()
+            return
         except Exception as e:
             print("Error converting date value {} to a date; "
                   "the current type is {}; error {}"\
                   .format(date_val, type(date_val), str(e)))
+            return
 
     conversion_functions = {
         FieldType.Date:  convert_date,
@@ -99,10 +115,6 @@ def convert_value(*,
         FieldType.Bool:  bool
     }
     try:
-        if not value:
-            # We need to return None instead of an empty string or 0 in the
-            # case of a date field.
-            return None
         return conversion_functions[field_type](value)
     except Exception as e:
         print('Error converting value {} to data type {}; err:'
@@ -116,6 +128,12 @@ def format_value(*,
         field_format: Optional[FieldFormat]=None
     ) -> SqlDataType:
     """Format a string value to a string appropriate for display to the user"""
+
+    if value is None:
+        return None
+    if isinstance(value, float):
+        if isnan(value) or isinf(value):
+            return
 
     inferred_data_types = {
         FieldFormat.Accounting: FieldType.Float,
@@ -134,17 +152,15 @@ def format_value(*,
         FieldFormat.Accounting: lambda val: '{: ,.2f} '.format(round(val, 2)),
         FieldFormat.Bool:       lambda val: str(val),
         FieldFormat.Currency:   lambda val: '${: ,.2f} '.format(round(val, 2)),
-        FieldFormat.Date:       lambda val: str(val),
+        FieldFormat.Date:       lambda val: str(val)[:10],
         FieldFormat.DateTime:   lambda val: str(val),
-        FieldFormat.Float:      lambda val: '{:,.4f}'.format(round(val, 2)),
+        FieldFormat.Float:      lambda val: '{: ,.4f}'.format(round(val, 2)),
         FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 2)),
         FieldFormat.Str:        lambda val: val
     }
     try:
-        if value:
-            converted_val = convert_value(field_type=data_type, value=value)
-            return formatters[format](converted_val)
-        return None #default_display_values[data_type]
+        converted_val = convert_value(field_type=data_type, value=value)
+        return formatters[format](converted_val)
     except Exception as e:
         print(
             'error formatting value,',
@@ -362,10 +378,10 @@ class CalculatedField:
         expr = Forward()
         atom = field | Group(lpar + expr + rpar)
         expr << atom + ZeroOrMore(op + expr)
-        return expr.parseString(expr).asList()
+        return expr.parseString(self.formula).asList()
 
     @static_property
-    def evaluate_expression(self):
+    def evaluate_expression(self) -> BinaryExpression:
         operator_lkp = {
             '-': lambda v1, v2: v1 - v2,
             '*': lambda v1, v2: v1 * v2,
@@ -400,10 +416,11 @@ class CalculatedField:
             fld_1 = resolve_branch(fld_1)
         if isinstance(fld_2, list):
             fld_2 = resolve_branch(fld_2)
-        return operator_lkp[op](
+        val = operator_lkp[op](
             evaluate_field(fld_1),
             evaluate_field(fld_2)
         )
+        return val
 
     @static_property
     def field_format(self):
@@ -425,7 +442,7 @@ class CalculatedField:
     @static_property
     def schema(self) -> BinaryExpression:
         try:
-            self.evaluate_expression.label(self.display_name)
+            return self.evaluate_expression.label(self.display_name)
         except Exception as e:
             print('error creating schema for calculated field {}; '
                   'error: {}'.format(self.display_name, str(e)))
