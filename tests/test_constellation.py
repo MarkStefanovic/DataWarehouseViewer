@@ -91,7 +91,13 @@ def test_convert_value_bool_field_returns_bool(x, bool_field):
 @given(x=floats())
 def test_convert_value_float_field_returns_float(x, float_field):
     """Test that converting a value to a float returns an float or None"""
-    assert type(convert_value(field_type=float_field.dtype, value=x)) == float
+    conv = convert_value(field_type=float_field.dtype, value=x)
+    if x is None:
+        assert conv is None
+    elif isinf(x) or isnan(x):
+        assert conv is None
+    else:
+        assert type(conv) == float
 
 
 @given(x=datetimes())
@@ -110,6 +116,7 @@ def test_format_value_integers(x, integer_field):
                            field_format=integer_field.field_format)
     assert fmt_val == '{: d}'.format(x)
     assert int(fmt_val) == x
+    assert re.match(r'^[\s\-]\d+', fmt_val)
 
 
 @given(x=datetimes())
