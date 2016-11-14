@@ -22,8 +22,8 @@ from hypothesis.strategies import (
 
 from star_schema.constellation import (
     convert_value,
-    format_value
-)
+    format_value,
+    CalculatedField)
 
 
 class TestConvertValue:
@@ -109,6 +109,66 @@ class TestFormatValue:
             abs_diff = abs(v - x)
             assert abs_diff <= 0.01
             assert re.match(r'^[\s\-].*\d[.]\d+', fmt_val)
+
+
+class TestCalculatedField:
+    @classmethod
+    def create_calculated_field(self, formula: str):
+        return CalculatedField(
+            formula=formula,
+            display_name='Test Calculated Field',
+            show_on_fact_table=True
+        )
+
+    @pytest.fixture(scope='module')
+    def int_calculated_field(self):
+        fld = self.create_calculated_field(
+            formula="(([1] + ([2] - [3])) - [2]) / ([3] - [2])")
+        fld.base_field_lkp = {}
+        return fld
+
+    @pytest.fixture(scope='module')
+    def text_calculated_field(self):
+        fld = self.create_calculated_field(
+            formula="([Apple] + [Pear]) / ([Tree] - [Pear])")
+        fld.base_field_lkp = {
+            'Apple': 2,
+            'Pear': 3,
+            'Tree': 4
+        }
+        return fld
+
+    @pytest.fixture(scope='module')
+    def mixed_calculated_field(self):
+        fld = self.create_calculated_field(
+            formula="([Apple] + [1.2]) / ([Tree] - [Pear])")
+        fld.base_field_lkp = {
+            'Apple': 2,
+            'Pear': 3,
+            'Tree': 4
+        }
+        return fld
+
+    def test_parsed_formula_numeric_formula(self, int_calculated_field):
+        assert int_calculated_field.parsed_formula == \
+               [[['1', '+', ['2', '-', '3']], '-', '2'], '/', ['3', '-', '2']]
+
+    def test_parsed_formula_text_formula(self, text_calculated_field):
+        assert text_calculated_field.parsed_formula == \
+               [['Apple', '+', 'Pear'], '/', ['Tree', '-', 'Pear']]
+
+    def test_parsed_formula_mixed_formula(self, mixed_calculated_field):
+        assert mixed_calculated_field.parsed_formula == \
+               [['Apple', '+', '1.2'], '/', ['Tree', '-', 'Pear']]
+
+    def test_evaluate_expression_numeric_formula(self, int_calculated_field):
+        assert int_calculated_field.evaluate_expression == -2.0
+
+    def test_evaluate_expression_text_formula(self, text_calculated_field):
+        assert text_calculated_field.evaluate_expression == 5
+
+    def test_evaluate_expression_mixed_formula(self, mixed_calculated_field):
+        assert mixed_calculated_field.evaluate_expression == 3.2
 
 
 if __name__ == '__main__':

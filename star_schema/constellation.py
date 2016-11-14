@@ -36,7 +36,8 @@ from pyparsing import (
     Literal,
     Word,
     Combine,
-    alphanums
+    alphanums,
+    Regex
 )
 from pyparsing import Optional as pypOptional
 
@@ -76,15 +77,20 @@ def convert_value(*,
     This conversion function is used to translate user input to a form that
     sqlalchemy can use."""
     default_values = {
-        FieldType.Int: 0,
-        FieldType.Str: '',
+        FieldType.Int:   0,
+        FieldType.Str:   '',
         FieldType.Float: 0.0,
-        FieldType.Bool: False,
-        FieldType.Date: None
+        FieldType.Bool:  False,
+        FieldType.Date:  None
     }
 
+    if value is None:
+        return None
     if not value:
         return default_values[field_type]
+    if isinstance(value, float):
+        if isnan(value) or isinf(value):
+            return None
 
     def convert_date(date_val):
         try:
@@ -128,13 +134,6 @@ def format_value(*,
         field_format: Optional[FieldFormat]=None
     ) -> SqlDataType:
     """Format a string value to a string appropriate for display to the user"""
-
-    if value is None:
-        return None
-    if isinstance(value, float):
-        if isnan(value) or isinf(value):
-            return
-
     inferred_data_types = {
         FieldFormat.Accounting: FieldType.Float,
         FieldFormat.Bool:       FieldType.Bool,
@@ -155,11 +154,13 @@ def format_value(*,
         FieldFormat.Date:       lambda val: str(val)[:10],
         FieldFormat.DateTime:   lambda val: str(val),
         FieldFormat.Float:      lambda val: '{: ,.4f}'.format(round(val, 2)),
-        FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 2)),
+        FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 0)),
         FieldFormat.Str:        lambda val: val
     }
     try:
         converted_val = convert_value(field_type=data_type, value=value)
+        if converted_val is None:
+            return None
         return formatters[format](converted_val)
     except Exception as e:
         print(
@@ -352,6 +353,10 @@ class CalculatedField:
         self.validate_config()
 
     @static_property
+    def base_field_lkp(self):
+        return self.star.base_field_schema_lkp
+
+    @static_property
     def dtype(self):
         """Mimic field property"""
         return FieldType.Float
@@ -362,7 +367,7 @@ class CalculatedField:
         return False
 
     @static_property
-    def expression(self):
+    def parsed_formula(self):
         """Parsed sql expression components
 
         :return: The pyparsing parser for a calculated field expression.
@@ -370,8 +375,9 @@ class CalculatedField:
         op = oneOf('+ - / *')
         lpar = Literal('(').suppress()
         rpar = Literal(')').suppress()
+        field_or_num = Regex(r'\w+\.?\w*')
         field_name = Combine(
-            pypOptional(Literal('-')) + Word(alphanums)
+            pypOptional(Literal('-')) + field_or_num #Word(alphanums)
             + ZeroOrMore(oneOf(['_', ' ']) + Word(alphanums))
         )
         field = Literal('[').suppress() + field_name + Literal(']').suppress()
@@ -389,14 +395,14 @@ class CalculatedField:
             '+': lambda v1, v2: v1 + v2
         }
 
-        def evaluate_field(fld: FieldName):
+        def evaluate_field(fld):
             if isinstance(fld, BinaryExpression):
                 return fld
             try:
                 return float(fld)
             except ValueError:
                 try:
-                    field = self.star.base_field_schema_lkp[fld]
+                    field = self.base_field_lkp[fld]
                     try:
                         return field.cast(Float(19, 2))
                     except:
@@ -404,23 +410,17 @@ class CalculatedField:
                 except KeyError:
                     return fld
 
-        def resolve_branch(branch):
-            fld1, oper, fld2 = branch
-            return operator_lkp[oper](
+        def resolve_branches(expr):
+            fld1, op, fld2 = expr
+            if isinstance(fld1, list):
+                fld1 = resolve_branches(fld1)
+            if isinstance(fld2, list):
+                fld2 = resolve_branches(fld2)
+            return operator_lkp[op](
                 evaluate_field(fld1),
                 evaluate_field(fld2)
             )
-
-        fld_1, op, fld_2 = self.expression
-        if isinstance(fld_1, list):
-            fld_1 = resolve_branch(fld_1)
-        if isinstance(fld_2, list):
-            fld_2 = resolve_branch(fld_2)
-        val = operator_lkp[op](
-            evaluate_field(fld_1),
-            evaluate_field(fld_2)
-        )
-        return val
+        return resolve_branches(self.parsed_formula)
 
     @static_property
     def field_format(self):
