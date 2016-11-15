@@ -9,10 +9,13 @@ from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
 
-from cell_editor_delegate import CellEditorDelegate
-from checkbox_delegate import CheckBoxDelegate
+from delegates import (
+    CellEditorDelegate,
+    CheckBoxDelegate,
+    ForeignKeyDelegate
+)
+from logger import rotating_log
 from star_schema.config import cfg
-from foreign_key_delegate import ForeignKeyDelegate
 from model import AbstractModel
 from star_schema.constellation import (
     Filter,
@@ -20,7 +23,7 @@ from star_schema.constellation import (
     FieldType,
     View
 )
-from utilities import delete_old_outputs, rootdir, timestr, timestamp
+from utilities import rootdir, timestr, timestamp
 
 
 class Control:
@@ -42,6 +45,7 @@ class DatasheetView(QtGui.QWidget):
             QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
+        self.logger = rotating_log('view.DatasheetView')
         self.model = AbstractModel(table=table)
         self.table = QtGui.QTableView()
         self.table.setSortingEnabled(True)
@@ -65,6 +69,9 @@ class DatasheetView(QtGui.QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.resizeColumnsToContents()
+        # self.table.resizeRowsToContents()
+        # self.table.setWordWrap(True)
+
         # self.table.horizontalHeader().setResizeMode(QtGui.QHeaderView.Stretch)
         # self.table.horizontalHeader().setStretchLastSection(True)
 
@@ -136,7 +143,10 @@ class DatasheetView(QtGui.QWidget):
                     self.checkbox_delegates[i] = chk_box
                     self.table.setItemDelegateForColumn(i, chk_box)
                 except Exception as e:
-                    print('error creating checkbox delegate for field index {}')
+                    self.logger.debug(
+                        'error creating checkbox delegate for field index {}'
+                        .format(str(e))
+                    )
 
     def add_foreign_key_comboboxes(self) -> None:
         self.foreign_key_delegates = {}
@@ -272,10 +282,15 @@ class DatasheetView(QtGui.QWidget):
 
         row_ix = rows[0] if rows else 0
         col_ix = cols[0] if cols else 0
+
         # If the user's mouse is not over a column in the table, don't show
         # the popup menu.
-        if not cols or row_ix < 0 or col_ix < 0:
+        if not cols and rows:
             return
+
+        if rows:
+            if row_ix < 0 or col_ix < 0:
+                return
 
         menu = QtGui.QMenu(self)
 
@@ -496,7 +511,9 @@ class DatasheetView(QtGui.QWidget):
             else:
                 self.set_status('No changes to save')
         except Exception as e:
-            self.set_status("Error saving changes: {}".format(e))
+            err_msg = "Error saving changes: {}".format(e)
+            self.logger.error('save: {}'.format(err_msg))
+            self.set_status(err_msg)
 
     @QtCore.pyqtSlot(str)
     def set_status(self, msg: str) -> None:
@@ -604,7 +621,7 @@ class MainView(QtGui.QDialog):
             , QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
-
+        self.logger = rotating_log('view.MainView')
         self.config_popup = None
         self.datasheet_controls = []
         self.query_designer_visibility = True
@@ -629,8 +646,6 @@ class MainView(QtGui.QDialog):
         self.tabs_loaded = set()
         if self.tab_indices[0].table_ref.show_on_load:
             self.load_tab(0)
-
-
 
         mainLayout = QtGui.QVBoxLayout()
         menubar = QtGui.QMenuBar()
@@ -696,8 +711,10 @@ class MainView(QtGui.QDialog):
                     if not txt_box.text():
                         txt_box.setText(val)
                 except Exception as e:
-                    print('error applying default filter {}; err:'
-                          .format(filter_name, str(e)))
+                    self.logger.debug(
+                        'apply_default_filters: error applying default filter '
+                        '{}; err:'.format(filter_name, str(e))
+                    )
             self.tab_filters_loaded.add(tab_index)
 
     @QtCore.pyqtSlot(int)

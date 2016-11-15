@@ -1,5 +1,6 @@
 from PyQt4 import QtCore, QtGui
 
+from logger import rotating_log
 from star_schema.config import cfg
 
 
@@ -69,6 +70,7 @@ class CheckBoxDelegate(QtGui.QStyledItemDelegate):
     """
     def __init__(self, parent) -> None:
         super(CheckBoxDelegate, self).__init__()
+        self.logger = rotating_log('delegates.CheckBoxDelegate')
 
     def createEditor(self, parent, option, index) -> None:
         return
@@ -94,8 +96,10 @@ class CheckBoxDelegate(QtGui.QStyledItemDelegate):
             check_box_style_option.state |= QtGui.QStyle.State_Enabled
             QtGui.QApplication.style().drawControl(QtGui.QStyle.CE_CheckBox, check_box_style_option, painter)
         except Exception as e:
-            print('error printing checkbox delegate {} for index {} option {}'
-                  .format(str(e), index, option))
+            self.logger.debug(
+                'paint: error printing checkbox delegate {} for index {} '
+                'option {}'.format(str(e), index, option)
+            )
 
     def editorEvent(self, event, model, option, index) -> bool:
         """Change the data in the model and the state of the checkbox

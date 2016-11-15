@@ -1,4 +1,4 @@
-from schema.calculated_field import (
+from star_schema.calculated_field import (
     evaluate_expression,
     parse_expression
 )

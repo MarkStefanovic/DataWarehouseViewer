@@ -15,7 +15,7 @@ from sqlalchemy.sql import (
     Update
 )
 from sqlalchemy.sql.elements import BinaryExpression
-from typing import Optional, List, Dict, Iterable
+from typing import Optional, List, Dict, Iterable, Any
 
 from sqlalchemy import (
     Boolean,
@@ -41,6 +41,7 @@ from pyparsing import (
 )
 from pyparsing import Optional as pypOptional
 
+from logger import rotating_log
 from star_schema import md
 from star_schema.custom_types import (
     FactName,
@@ -182,7 +183,8 @@ class Field:
         field_format: Optional[FieldFormat]=None,
         filters: Optional[List[FilterConfig]]=None,
         editable: bool=True,
-        primary_key: bool=False
+        primary_key: bool=False,
+        default_value: Any=None
     ) -> None:
 
         self.name = name
@@ -192,6 +194,7 @@ class Field:
         self.editable = editable
         self.primary_key = primary_key
         self.filters = filters
+        self.default_value = default_value
 
     @static_property
     def schema(self) -> Column:
@@ -333,6 +336,66 @@ class AdditiveField:
 
 
 @autorepr
+class Filter:
+    def __init__(self, *,
+        field, #: Field,
+        operator: Operator,
+        default_value: Optional[SqlDataType]=None
+    ) -> None:
+
+        self.field = field
+        self.operator = operator
+        self.default_value = default_value
+        self._value = None  # type: Optional[SqlDataType]
+
+    @static_property
+    def display_name(self) -> str:
+        suffix = self.operator.suffix
+        return self.field.display_name + (" " + suffix if suffix else "")
+
+    @property
+    def filter(self) -> BinaryExpression:
+        fld = self.field.schema
+        operator_mapping = {
+            Operator.number_equals: fld == self.value,
+            Operator.number_does_not_equal: fld != self.value,
+            Operator.number_greater_than: fld > self.value,
+            Operator.number_greater_than_or_equal_to: fld >= self.value,
+            Operator.number_less_than: fld < self.value,
+            Operator.number_less_than_or_equal_to: fld <= self.value,
+
+            Operator.str_equals: fld == self.value,
+            Operator.str_like: fld.contains(self.value),
+            Operator.str_not_like: fld.notlike('%{}%'.format(self.value)),
+            Operator.str_starts_with: fld.startswith(self.value),
+            Operator.str_ends_with: fld.endswith(self.value),
+
+            Operator.date_after: func.date(fld) > self.value,
+            Operator.date_on_or_after: func.date(fld) >= self.value,
+            Operator.date_before: func.date(fld) < self.value,
+            Operator.date_on_or_before: func.date(fld) <= self.value,
+            Operator.date_equals: func.date(fld) == self.value,
+            Operator.date_does_not_equal: func.date(fld) != self.value
+        }
+        if self.value:
+            return operator_mapping[self.operator]
+
+    def __lt__(self, other) -> bool:
+        return self.display_name < other.display_name
+
+    @property
+    def value(self) -> SqlDataType:
+        return convert_value(
+            field_type=self.field.dtype,
+            value=self._value
+        )
+
+    @value.setter
+    def value(self, value: str) -> None:
+        """The slot that the associated filter control sends messages to."""
+        self._value = value
+
+@autorepr
 class CalculatedField:
     """A field that represents the combination of one or more fields in a Star.
 
@@ -340,12 +403,17 @@ class CalculatedField:
     def __init__(self, *,
         formula: str,
         display_name: FieldName,
-        show_on_fact_table: bool=True
+        show_on_fact_table: bool=True,
+        filters: Optional[List[FilterConfig]]=None,
+        default_value: Optional[Any]=None
     ) -> None:
 
         self.formula = formula
         self.display_name = display_name
         self.show_on_fact_table = show_on_fact_table
+        self.default_value = default_value
+        self._filters = filters
+
         # The star property is injected by the Star itself later.
         # It must be populated before this field can be used.
         self._star = None
@@ -365,6 +433,23 @@ class CalculatedField:
     def editable(self):
         """Mimic field property"""
         return False
+
+    @static_property
+    def filters(self) -> Optional[List[Filter]]:
+        if self._filters:
+            try:
+                return [
+                    Filter(
+                        field=self,
+                        operator=flt.operator,
+                        default_value=flt.default_value
+                    )
+                    for flt in self._filters
+                ]
+            except Exception as e:
+                print("Could not create filters for calculated field {}"
+                      "; error: {}".format(self.display_name, str(e)))
+        return []
 
     @static_property
     def parsed_formula(self):
@@ -468,67 +553,6 @@ class CalculatedField:
 
 
 @autorepr
-class Filter:
-    def __init__(self, *,
-        field, #: Field,
-        operator: Operator,
-        default_value: Optional[SqlDataType]=None
-    ) -> None:
-
-        self.field = field
-        self.operator = operator
-        self.default_value = default_value
-        self._value = None  # type: Optional[SqlDataType]
-
-    @static_property
-    def display_name(self) -> str:
-        suffix = self.operator.suffix
-        return self.field.display_name + (" " + suffix if suffix else "")
-
-    @property
-    def filter(self) -> BinaryExpression:
-        fld = self.field.schema
-        operator_mapping = {
-            Operator.number_equals: fld == self.value,
-            Operator.number_does_not_equal: fld != self.value,
-            Operator.number_greater_than: fld > self.value,
-            Operator.number_greater_than_or_equal_to: fld >= self.value,
-            Operator.number_less_than: fld < self.value,
-            Operator.number_less_than_or_equal_to: fld <= self.value,
-
-            Operator.str_equals: fld == self.value,
-            Operator.str_like: fld.contains(self.value),
-            Operator.str_not_like: fld.notlike('%{}%'.format(self.value)),
-            Operator.str_starts_with: fld.startswith(self.value),
-            Operator.str_ends_with: fld.endswith(self.value),
-
-            Operator.date_after: func.date(fld) > self.value,
-            Operator.date_on_or_after: func.date(fld) >= self.value,
-            Operator.date_before: func.date(fld) < self.value,
-            Operator.date_on_or_before: func.date(fld) <= self.value,
-            Operator.date_equals: func.date(fld) == self.value,
-            Operator.date_does_not_equal: func.date(fld) != self.value
-        }
-        if self.value:
-            return operator_mapping[self.operator]
-
-    def __lt__(self, other) -> bool:
-        return self.display_name < other.display_name
-
-    @property
-    def value(self) -> SqlDataType:
-        return convert_value(
-            field_type=self.field.dtype,
-            value=self._value
-        )
-
-    @value.setter
-    def value(self, value: str) -> None:
-        """The slot that the associated filter control sends messages to."""
-        self._value = value
-
-
-@autorepr
 class SummaryField(Field):
     """Concatenate multiple fields
 
@@ -572,6 +596,7 @@ class Table:
         show_on_load: bool=False,
         order_by: Optional[List[SortOrder]]=None,
         display_rows: int=10000,
+        refresh_on_update: bool=False
     ) -> None:
 
         self.table_name = table_name
@@ -581,6 +606,7 @@ class Table:
         self.display_rows = display_rows
         self.order_by = order_by
         self.show_on_load = show_on_load
+        self.refresh_on_update = refresh_on_update
 
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values"""
@@ -695,7 +721,8 @@ class Dimension(Table):
             editable: bool=False,
             show_on_load: bool=True,
             order_by: Optional[List[OrderBy]]=None,
-            display_rows: int=10000
+            display_rows: int=10000,
+            refresh_on_update: bool=False
     ) -> None:
 
         super(Dimension, self).__init__(
@@ -705,10 +732,12 @@ class Dimension(Table):
             editable=editable,
             show_on_load=show_on_load,
             display_rows=display_rows,
-            order_by=order_by
+            order_by=order_by,
+            refresh_on_update=refresh_on_update
         )
 
         self.summary_field = summary_field
+        self.refresh_on_update = refresh_on_update
 
     @static_property
     def display_field_schemas(self) -> List[Column]:
@@ -784,7 +813,7 @@ class ForeignKey(Field):
             name=name,
             dtype=FieldType.Int,
             display_name=display_name,
-            filters=None,
+            filters=None,  # filters for fks are created on the Star
             editable=True,
             primary_key=False
         )
@@ -820,7 +849,8 @@ class Fact(Table):
             editable: bool=False,
             display_rows: int=10000,
             order_by: Optional[List[OrderBy]]=None,
-            calculated_fields: Optional[List[CalculatedField]]=None
+            calculated_fields: Optional[List[CalculatedField]]=None,
+            refresh_on_update: bool=False
     ) -> None:
 
         super(Fact, self).__init__(
@@ -834,6 +864,7 @@ class Fact(Table):
         )
 
         self.calculated_fields = calculated_fields
+        self.refresh_on_update = refresh_on_update
 
     @property
     def dimensions(self) -> List[DimensionName]:
@@ -917,19 +948,21 @@ class Star:
                 star_filters.append(fk_filter)
         for f in (flt for flt in self.fact.filters):
             star_filters.append(f)
+        for fld in self.calculated_fields:
+            for flt in fld.filters:
+                star_filters.append(flt)
         return sorted(star_filters)
 
     @static_property
     def fields_by_display_name(self) -> Dict[FieldName, Field]:
-        # fact_fields = {fld.display_name: fld for fld in self.fact.fields}
-        # all_fields = ChainMap({}, fact_fields,
-        #                           self.summary_fields,
-        #                           self.calculated_fields)
-        # return all_fields
         return {
             fld.display_name: fld
             for fld in self.fields
         }
+
+    @static_property
+    def refresh_on_update(self):
+        return self.fact.refresh_on_update
 
     @property
     def select(self) -> Select:
@@ -958,7 +991,7 @@ class Star:
             if order_by.field_name in self.summary_fields.keys():
                 fld = self.summary_fields[order_by.field_name]
             else:
-                fld = self.fact.field(order_by.field_name).schema
+                fld = self.fields_by_display_name[order_by.field_name].schema
             if order_by.sort_order == SortOrder.Ascending:
                 return fld.asc()
             return fld.desc()
@@ -1132,6 +1165,7 @@ class Constellation:
             tbl.table_name: {}
             for tbl in dimensions
         }  # type: Dict[str, Dict[int, str]]
+        self.logger = rotating_log('constellation.Constelation')
 
     @static_property
     def stars(self) -> Dict[FactName, Star]:
@@ -1146,21 +1180,33 @@ class Constellation:
 
     @property
     def foreign_key_lookups(self) -> Dict[DimensionName, Select]:
-        return {
-            tbl.table_name: tbl.foreign_key_schema
-            for tbl in self.dimensions
-        }
+        try:
+            return {
+                tbl.table_name: tbl.foreign_key_schema
+                for tbl in self.dimensions
+            }
+        except Exception as e:
+            self.logger.error('foreign_key_lookups: error {}'
+                              .format(str(e)))
 
     def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue,
                                                        SqlDataType]:
-        if self._foreign_keys[dim]:
+        if self._foreign_keys.get(dim):
             return self._foreign_keys[dim]
-        self.pull_foreign_keys(dim)
-        fks = self._foreign_keys[dim]
-        if not 0 in fks:
-            self._foreign_keys[dim][0] = ""
-            fks[0] = ""
-        return fks
+        try:
+            self.pull_foreign_keys(dim)
+            fks = self._foreign_keys[dim]
+            if 0 not in fks:
+                self._foreign_keys[dim][0] = ""
+                fks[0] = ""
+            return fks
+        except KeyError:
+            self.logger.error('foreign_keys: '
+                  'Unable to find the Dimension {}; '
+                  .format(dim))
+        except Exception as e:
+            self.logger.error('foreign_keys: error {}; '
+                              .format(str(e)))
 
     def pull_foreign_keys(self, dim: DimensionName) -> None:
         try:

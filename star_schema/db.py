@@ -18,7 +18,7 @@ from sqlalchemy.sql import (
 )
 
 from star_schema.config import cfg, ConfigError
-from logger import log_error
+from logger import log_error, rotating_log
 
 
 def get_engine():
@@ -32,12 +32,10 @@ def get_engine():
                               .format(cfg.app.db_path))
     return engine
 
-eng = get_engine()
-
 
 class Transaction:
     def __init__(self) -> None:
-        self.connection = eng.connect()
+        self.connection = get_engine().connect() #eng.connect()
         self.transaction = self.connection.begin()
         self.rows_added = 0
         self.rows_deleted = 0
@@ -79,7 +77,7 @@ class Transaction:
 
 @log_error
 def fetch(qry: Select) -> List[str]:
-    con = eng.connect()
+    con = get_engine().connect() #eng.connect()
     try:
         from sqlalchemy.dialects import sqlite
         print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))

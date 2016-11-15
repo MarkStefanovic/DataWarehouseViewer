@@ -1,6 +1,6 @@
 from pytest import fixture
 
-from star_schema.constellation import Field
+from star_schema.constellation import Field, CalculatedField
 from star_schema.custom_types import FieldType, FieldFormat
 
 
@@ -42,3 +42,12 @@ def date_field():
                  dtype=FieldType.Date,
                  display_name='Test Date Field',
                  field_format=FieldFormat.Date)
+
+
+# @fixture(scope='module')
+# def calculated_field():
+#     return CalculatedField(
+#         formula='1 + 2',
+#         display_name='Test Calculated Field',
+#         show_on_fact_table=True
+#     )

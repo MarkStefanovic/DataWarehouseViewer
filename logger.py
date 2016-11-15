@@ -48,7 +48,7 @@ def rotating_log(name: str='main') -> logging.Logger:
     logger.setLevel(logging.ERROR)
     if DEBUG:
         stream_handler = StreamHandler(stream=sys.stderr)
-        stream_handler.setLevel(logging.ERROR)
+        stream_handler.setLevel(logging.DEBUG)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
     return logger

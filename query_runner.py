@@ -15,22 +15,24 @@ class QueryRunnerSignals(QtCore.QObject):
 
 class QueryRunnerThread(QtCore.QThread):
 
-    def __init__(self, query: str) -> None:
+    def __init__(self, query: str, show_rows_returned: bool=True) -> None:
         super(QueryRunnerThread, self).__init__()
         self.query = query  # type: str
         self.signals = QueryRunnerSignals()
         self.start_time = time.time()
+        self.show_rows_returned = show_rows_returned
 
     @log_error
     def pull(self) -> None:
         try:
             results = fetch(self.query)
-            self.signals.rows_returned_msg.emit(
-                '{} rows returned in {} seconds'.format(
-                    len(results),
-                    int(time.time() - self.start_time)
+            if self.show_rows_returned:
+                self.signals.rows_returned_msg.emit(
+                    '{} rows returned in {} seconds'.format(
+                        len(results),
+                        int(time.time() - self.start_time)
+                    )
                 )
-            )
             self.signals.results.emit(results)
         except Exception as e:
             self.signals.error.emit(
@@ -56,9 +58,9 @@ class QueryRunner(QtCore.QObject):
         self.thread = None
 
     @log_error
-    def run_sql(self, query: str) -> None:
+    def run_sql(self, query: str, show_rows_returned: bool=True) -> None:
         self.signals.exit.emit()  # stop current thread
-        self.thread = QueryRunnerThread(query)
+        self.thread = QueryRunnerThread(query, show_rows_returned)
         self.signals.exit.connect(self.thread.stop)
         self.thread.signals.error.connect(self.signals.error.emit)
         self.thread.signals.rows_returned_msg.connect(self.signals.rows_returned_msg.emit)

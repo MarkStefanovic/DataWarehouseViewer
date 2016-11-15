@@ -12,6 +12,7 @@ from typing import (
 from PyQt4 import QtCore
 from sortedcontainers import SortedSet
 
+from logger import rotating_log
 from star_schema.config import cfg
 from star_schema.custom_types import ColumnIndex, SqlDataType, FieldIndex
 from query_manager import QueryManager
@@ -36,6 +37,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.modified_data = []
         self.visible_data = []
 
+        self.logger = rotating_log('model.AbstractModel')
+
         # variables needed for pagination
         self.rows_per_page = 50
         self.rows_loaded = 50
@@ -52,11 +55,14 @@ class AbstractModel(QtCore.QAbstractTableModel):
             , FieldType.Date: None #'1900-01-01'
         }
         dummy_row = []  # type: List
-        for fld in self.query_manager.fields:
-            dummy_row.append(dummies[fld.dtype])
+        for fld in self.query_manager.base.fields:
+            if fld.default_value:
+                dummy_row.append(fld.default_value)
+            else:
+                dummy_row.append(dummies[fld.dtype])
         for k, v in self.query_manager.table.foreign_keys.items():
-            # dummy_row[k] = next(fk for fk in self.foreign_keys[k])
             dummy_row[k] = None #next(fk for fk in self.foreign_keys[k])
+
         dummy_row[self.query_manager.table.primary_key_index] = uuid.uuid4().int
         self.beginInsertRows(QModelIndex(), 0, 0)
         self.visible_data.insert(ix.row() + 1, dummy_row)
@@ -124,8 +130,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     , len(set(val[col_ix] for val in self.visible_data if val[col_ix]))))
             return totals
         except Exception as e:
-            print('Error calculating field_totals for column {}; err: {}'
-                  .format(col_ix, str(e)))
+            self.logger.error('field_totals: Error calculating field_totals for '
+                              'column {}; error: {}'.format(col_ix, str(e)))
 
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
         return len(self.query_manager.fields)
@@ -160,10 +166,11 @@ class AbstractModel(QtCore.QAbstractTableModel):
                         field_format=fld.field_format
                     )
                 except Exception as e:
-                    print('error displaying data {}'.format(str(e)))
+                    self.logger.debug('data: error displaying data {}'.format(str(e)))
                     return val
         except Exception as e:
-            print('error in data method of model: {}'.format(str(e)))
+            self.logger.debug('data: error in data method of model: {}'
+                              .format(str(e)))
             self.error_signal.emit('Error modeling data: {}'.format(e))
 
     def delete_row(self, ix: QtCore.QModelIndex) -> None:
@@ -265,8 +272,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
             ]
             self.filters_changed_signal.emit()
         except Exception as e:
-            print('Error applying checkbox filter for col {}; values {}; err:'
-                  .format(col, values, str(e)))
+            self.logger.error('filter_set: Error applying checkbox filter for col {}; '
+                              'values {}; error {}:'.format(col, values, str(e)))
 
     def flags(self, ix: QtCore.QModelIndex) -> int:
         if ix.column() in self.query_manager.editable_fields_indices:
@@ -287,10 +294,16 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     @property
     def foreign_keys(self) -> Dict[ColumnIndex, Dict[int, str]]:
-        return {
-            ColumnIndex(k): cfg.foreign_keys(v.dimension)
-            for k, v in self.query_manager.table.foreign_keys.items()
-        }
+        try:
+            return {
+                ColumnIndex(k): cfg.foreign_keys(v.dimension)
+                for k, v
+                in self.query_manager.table.foreign_keys.items()
+            }
+        except Exception as e:
+            self.logger.error("foreign_keys: "
+                              "The model can't find the foreign keys; "
+                              "error {}".format(str(e)))
 
     def full_reset(self) -> None:
         self.layoutAboutToBeChanged.emit()
@@ -313,9 +326,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
             return False
         return False
 
-    def pull(self) -> None:
+    def pull(self, show_rows_returned=True) -> None:
         self.rows_loaded = self.rows_per_page
-        self.query_manager.pull()
+        self.query_manager.pull(show_rows_returned)
 
     def primary_key(self, row: int) -> int:
         """Return the primary key value of the specified row"""
@@ -359,6 +372,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
                 if self.query_manager.table in cfg.dimensions:
                     cfg.pull_foreign_keys(self.query_manager.table.table_name)
+                if self.query_manager.base.refresh_on_update:
+                    self.pull(show_rows_returned=False)
                 return results
             except:
                 raise
@@ -402,8 +417,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
                         , key=lambda row: row[col] or 0 #operator.itemgetter(col)
                     )
                 except Exception as e:
-                    print('could not sort rows by their native data type; err: {}; '
-                          'reverting to sorting by string value'.format(str(e)))
+                    self.logger.error('sort: Could not sort rows by their native '
+                                      'data type; err: {}; reverting to sorting '
+                                      'by string value'.format(str(e)))
                     self.visible_data = sorted(
                         self.visible_data
                         , key=lambda row: str(row[col] or 0).lower()
@@ -413,6 +429,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.layoutChanged.emit()
         except Exception as e:
             err_msg = "Error sorting data; col: {} err: {}".format(col, e)
+            self.logger.error('sort: {}'.format(err_msg))
             self.error_signal.emit(err_msg)
 
     def undo(self) -> None:

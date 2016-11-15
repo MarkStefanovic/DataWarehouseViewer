@@ -10,7 +10,7 @@ from star_schema.config import cfg
 from star_schema.custom_types import TableName
 from star_schema.db import Transaction
 from query_exporter import QueryExporter
-from logger import log_error
+from logger import log_error, rotating_log
 from query_runner import QueryRunner
 from star_schema.constellation import (
     Fact,
@@ -41,6 +41,7 @@ class QueryManager(QtCore.QObject):
         self.view = cfg.view(self.table.display_name) if isinstance(self.table, View) else None
 
         self.filters = self.star.filters if self.star else self.table.filters
+        self.logger = rotating_log('query_manager.QueryManager')
 
     #   Connect Signals
         self.runner.signals.results.connect(self.process_results)
@@ -98,8 +99,11 @@ class QueryManager(QtCore.QObject):
             for flt in self.base.filters
         }
 
-    def pull(self) -> None:
-        self.runner.run_sql(query=self.sql_display)
+    def pull(self, show_rows_returned: bool=True) -> None:
+        self.runner.run_sql(
+            query=self.sql_display,
+            show_rows_returned=show_rows_returned
+        )
 
     @QtCore.pyqtSlot(list)
     def process_results(self, results: list) -> None:
@@ -122,8 +126,7 @@ class QueryManager(QtCore.QObject):
             self.query_results_signal.emit(processed)
         except Exception as e:
             err_msg = "Error processing results: {}".format(e)
-            print(err_msg)
-            print('results that errors:', results[:5])
+            self.logger.debug('process_results: {}'.format(err_msg))
             self.error_signal.emit(err_msg)
 
     def reset(self) -> None:

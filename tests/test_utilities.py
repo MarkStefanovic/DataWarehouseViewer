@@ -5,8 +5,6 @@ import pytest
 
 from utilities import (
     cache,
-    inspect_table,
-    is_float,
     SqliteField,
     valid_sql_field_name
 )
@@ -32,16 +30,16 @@ def test_cache():
 
 
 
-def test_inspect_table():
-    assert inspect_table(db='test.db', table='test') == [
-        SqliteField(
-            ix=0, name='id'
-            , data_type='INTEGER'
-            , nullable=False
-            , default_value=None
-            , primary_key=True
-        )
-    ]
+# def test_inspect_table():
+#     assert inspect_table(db='test.db', table='test') == [
+#         SqliteField(
+#             ix=0, name='id'
+#             , data_type='INTEGER'
+#             , nullable=False
+#             , default_value=None
+#             , primary_key=True
+#         )
+#     ]
 
 
 def test_is_float():
