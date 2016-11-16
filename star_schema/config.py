@@ -1,5 +1,8 @@
+import datetime
+
 from sqlalchemy import func
 
+from logger import rotating_log
 from star_schema.constellation import (
     AdditiveField,
     CalculatedField,
@@ -21,10 +24,15 @@ from star_schema.custom_types import (
 )
 
 
+class DefaultDates:
+    now = datetime.datetime.now().isoformat()
+    today = datetime.datetime.today().strftime("%Y-%m-%d")
+
+
 class ConfigError(Exception):
     def __init__(self, message: str):
         self.message = message
-        print(message)
+        rotating_log('config.ConfigError').error(message)
 
 
 class App:
@@ -362,6 +370,7 @@ cfg = Constellation(
 '''
 
 
+'''
 cfg = Constellation(
     app=App(
         display_name='SalesDW',
@@ -386,8 +395,10 @@ cfg = Constellation(
                     dtype=FieldType.Str,
                     display_name='Name',
                     filters=[
-                        FilterConfig(operator=Operator.str_like,
-                                     default_value='')
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
                     ]
                 ),
                 Field(
@@ -395,8 +406,10 @@ cfg = Constellation(
                     dtype=FieldType.Str,
                     display_name='Category',
                     filters=[
-                        FilterConfig(operator=Operator.str_like,
-                                     default_value='')
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
                     ]
                 )
             ],
@@ -405,8 +418,10 @@ cfg = Constellation(
                 display_name='Product',
                 separator=' - ',
                 filters=[
-                    FilterConfig(operator=Operator.str_like,
-                                 default_value=''),
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    ),
                 ]
             ),
             order_by=[
@@ -433,8 +448,10 @@ cfg = Constellation(
                     dtype=FieldType.Str,
                     display_name='Customer Name',
                     filters=[
-                        FilterConfig(operator=Operator.str_like,
-                                     default_value='Mark')
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value='Mark'
+                        )
                     ]
                 ),
                 Field(
@@ -442,8 +459,10 @@ cfg = Constellation(
                     dtype=FieldType.Str,
                     display_name='Shipping Address',
                     filters=[
-                        FilterConfig(operator=Operator.str_like,
-                                     default_value='')
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
                     ]
                 ),
             ],
@@ -452,8 +471,10 @@ cfg = Constellation(
                 display_name='Customer',
                 separator=' - ',
                 filters=[
-                    FilterConfig(operator=Operator.str_like,
-                                 default_value='')
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    )
                 ]
             ),
             order_by=[
@@ -495,10 +516,14 @@ cfg = Constellation(
                     dtype=FieldType.Date,
                     display_name='Order Date',
                     filters=[
-                        FilterConfig(operator=Operator.date_on_or_before,
-                                     default_value=''),
-                        FilterConfig(operator=Operator.date_on_or_after,
-                                     default_value='2015-01-01'),
+                        FilterConfig(
+                            operator=Operator.date_on_or_before,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.date_on_or_after,
+                            default_value='2015-01-01'
+                        ),
                     ]
                 ),
                 Field(
@@ -506,10 +531,14 @@ cfg = Constellation(
                     dtype=FieldType.Date,
                     display_name='Shipping Date',
                     filters=[
-                        FilterConfig(operator=Operator.date_on_or_before,
-                                     default_value=''),
-                        FilterConfig(operator=Operator.date_on_or_after,
-                                     default_value='2015-01-01'),
+                        FilterConfig(
+                            operator=Operator.date_on_or_before,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.date_on_or_after,
+                            default_value='2015-01-01'
+                        ),
                     ]
                 ),
                 Field(
@@ -518,8 +547,10 @@ cfg = Constellation(
                     display_name='Sales Amount',
                     field_format=FieldFormat.Accounting,
                     filters=[
-                        FilterConfig(operator=Operator.number_greater_than_or_equal_to,
-                                     default_value='0.00')
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value='0.00'
+                        )
                     ]
                 ),
                 Field(
@@ -532,17 +563,35 @@ cfg = Constellation(
             ],
             calculated_fields=[
                 CalculatedField(
-                    formula='[Sales Amount] - ([Paid] * [Sales Amount])',
+                    formula='[Sales Amount] * [1.04]',
+                    display_name='Sales with Tax',
+                    show_on_fact_table=True,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value='10.00'
+                        )
+                    ]
+                ),
+                CalculatedField(
+                    formula='[1.04] * ([Sales Amount] - ([Paid] * [Sales Amount]))',
                     display_name='Amount Due',
-                    show_on_fact_table=True
+                    show_on_fact_table=True,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value='0.00'
+                        )
+                    ]
                 )
             ],
             order_by=[
                 OrderBy(
-                    field_name='Customer',
-                    sort_order=SortOrder.Ascending
+                    field_name='Amount Due',
+                    sort_order=SortOrder.Descending
                 )
-            ]
+            ],
+            refresh_on_update=True
         )
     ],
     views=[
@@ -557,12 +606,12 @@ cfg = Constellation(
                     aggregate_func=func.count
                 ),
                 AdditiveField(
-                    base_field_display_name='Sales Amount',
+                    base_field_display_name='Sales with Tax',
                     aggregate_display_name='Total Sales',
                     aggregate_func=func.sum
                 ),
                 AdditiveField(
-                    base_field_display_name='Sales Amount',
+                    base_field_display_name='Sales with Tax',
                     aggregate_display_name='Average Sale',
                     aggregate_func=func.avg
                 ),
@@ -570,6 +619,12 @@ cfg = Constellation(
                     base_field_display_name='Amount Due',
                     aggregate_display_name='Total Amount Due',
                     aggregate_func=func.sum
+                )
+            ],
+            order_by=[
+                OrderBy(
+                    field_name='Total Amount Due',
+                    sort_order=SortOrder.Descending
                 )
             ],
             show_on_load=True
@@ -593,6 +648,373 @@ cfg = Constellation(
                     base_field_display_name='Sales Amount',
                     aggregate_display_name='Average Sale',
                     aggregate_func=func.avg
+                )
+            ],
+            show_on_load=True
+        )
+    ]
+)
+'''
+
+
+cfg = Constellation(
+    app=App(
+        display_name='Submission Tracker',
+        color_scheme='darkcity.css',
+        db_path='sqlite:///submission_tracker.db'
+    ),
+    dimensions=[
+        Dimension(
+            table_name='dimPublication',
+            display_name='Publications',
+            editable=True,
+            show_on_load=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.Int,
+                    display_name='Publication ID',
+                    primary_key=True
+                ),
+                Field(
+                    name='PublicationName',
+                    dtype=FieldType.Str,
+                    display_name='Name',
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='PublicationGenres',
+                    dtype=FieldType.Str,
+                    display_name='Genres',
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='SimultaneousSubmissions',
+                    dtype=FieldType.Bool,
+                    display_name='Simultaneous Submissions',
+                    filters=[]
+                ),
+                Field(
+                    name='Notes',
+                    dtype=FieldType.Str,
+                    display_name='Publication Notes',
+                    field_format=FieldFormat.Str,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+            ],
+            summary_field=SummaryField(
+                display_fields=['PublicationName', 'PublicationGenres'],
+                display_name='Publication',
+                separator=' - ',
+                filters=[
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    ),
+                ]
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='PublicationName',
+                    sort_order=SortOrder.Ascending
+                )
+            ]
+        )
+        , Dimension(
+            table_name='dimStory',
+            display_name='Stories',
+            editable=True,
+            show_on_load=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.Int,
+                    display_name='Story ID',
+                    primary_key=True
+                ),
+                Field(
+                    name='Title',
+                    dtype=FieldType.Str,
+                    display_name='Title',
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='Genres',
+                    dtype=FieldType.Str,
+                    display_name='Genre(s)',
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='DateFinished',
+                    dtype=FieldType.Date,
+                    display_name='Date Finished',
+                    default_value=DefaultDates.today,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.date_on_or_after,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.date_on_or_before,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='WordLength',
+                    dtype=FieldType.Int,
+                    display_name='Word Length',
+                    default_value=0,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.number_less_than_or_equal_to,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='Notes',
+                    dtype=FieldType.Str,
+                    display_name='Story Notes',
+                    field_format=FieldFormat.Str,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+            ],
+            summary_field=SummaryField(
+                display_fields=['Title', 'Genres'],
+                display_name='Story',
+                separator=' - ',
+                filters=[
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    )
+                ]
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='Title',
+                    sort_order=SortOrder.Ascending
+                )
+            ]
+        )
+        , Dimension(
+            table_name='dimStatus',
+            display_name='Statuses',
+            editable=True,
+            show_on_load=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.Int,
+                    display_name='Status ID',
+                    primary_key=True
+                ),
+                Field(
+                    name='Status',
+                    dtype=FieldType.Str,
+                    display_name='Status',
+                    filters=[
+                        # FilterConfig(
+                        #     operator=Operator.str_like,
+                        #     default_value=''
+                        # )
+                    ]
+                )
+            ],
+            summary_field=SummaryField(
+                display_fields=['Status'],
+                display_name='Status',
+                separator=' - ',
+                filters=[
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    )
+                ]
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='Status',
+                    sort_order=SortOrder.Ascending
+                )
+            ]
+        )
+    ],
+    facts=[
+        Fact(
+            table_name='factSubmission',
+            display_name='Submissions',
+            editable=True,
+            display_rows=1000,
+            show_on_load=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.Int,
+                    display_name='Status ID',
+                    primary_key=True
+                ),
+                ForeignKey(
+                    name='StoryID',
+                    display_name='Story',
+                    dimension='dimStory',
+                    foreign_key_field='ID'
+                ),
+                ForeignKey(
+                    name='PublicationID',
+                    display_name='Publication',
+                    dimension='dimPublication',
+                    foreign_key_field='ID'
+                ),
+                ForeignKey(
+                    name='StatusID',
+                    display_name='Status',
+                    dimension='dimStatus',
+                    foreign_key_field='ID'
+                ),
+                Field(
+                    name='DateSubmitted',
+                    dtype=FieldType.Date,
+                    display_name='Date Submitted',
+                    default_value=DefaultDates.today,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.date_on_or_before,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.date_on_or_after,
+                            default_value=''
+                        ),
+                    ]
+                ),
+                Field(
+                    name='Revenue',
+                    dtype=FieldType.Float,
+                    display_name='Revenue',
+                    field_format=FieldFormat.Accounting,
+                    filters=[
+                        # FilterConfig(
+                        #     operator=Operator.number_greater_than_or_equal_to,
+                        #     default_value='0.00'
+                        # )
+                    ]
+                ),
+                Field(
+                    name='Expenses',
+                    dtype=FieldType.Float,
+                    display_name='Expenses',
+                    field_format=FieldFormat.Accounting,
+                    filters=[
+                        # FilterConfig(
+                        #     operator=Operator.number_greater_than_or_equal_to,
+                        #     default_value='0.00'
+                        # )
+                    ]
+                ),
+                Field(
+                    name='Response',
+                    dtype=FieldType.Str,
+                    display_name='Response(s)',
+                    field_format=FieldFormat.Str,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='Notes',
+                    dtype=FieldType.Str,
+                    display_name='Submission Notes',
+                    field_format=FieldFormat.Str,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.str_like,
+                            default_value=''
+                        )
+                    ]
+                ),
+            ],
+            calculated_fields=[
+                CalculatedField(
+                    formula='[Revenue] - [Expenses]',
+                    display_name='Income',
+                    show_on_fact_table=True,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        )
+                    ]
+                )
+            ],
+            order_by=[
+                OrderBy(
+                    field_name='Date Submitted',
+                    sort_order=SortOrder.Descending
+                )
+            ],
+            refresh_on_update=False
+        )
+    ],
+    views=[
+        View(
+            view_display_name='Publication Totals',
+            fact_table_name='factSubmission',
+            group_by_field_names=['Publication', 'Status'],
+            additive_fields=[
+                AdditiveField(
+                    base_field_display_name='Date Submitted',
+                    aggregate_display_name='Stories Submitted',
+                    aggregate_func=func.count
+                ),
+                AdditiveField(
+                    base_field_display_name='Income',
+                    aggregate_display_name='Total Income',
+                    aggregate_func=func.sum
+                ),
+            ],
+            order_by=[
+                OrderBy(
+                    field_name='Publication',
+                    sort_order=SortOrder.Ascending
                 )
             ],
             show_on_load=True

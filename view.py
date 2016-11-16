@@ -28,7 +28,6 @@ from utilities import rootdir, timestr, timestamp
 
 class Control:
     def __init__(self, *, handle, display_name: str, control_type) -> None:
-        # TODO make type to represent pyqt controls
         self.handle = handle
         self.display_name = display_name
         self.control_type = control_type
