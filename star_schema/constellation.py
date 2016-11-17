@@ -14,8 +14,8 @@ from sqlalchemy.sql import (
     Select,
     Update
 )
-from sqlalchemy.sql.elements import BinaryExpression
-from typing import Optional, List, Dict, Iterable, Any
+from sqlalchemy.sql.elements import BinaryExpression, literal
+from typing import Optional, List, Dict, Iterable, Any, Union
 
 from sqlalchemy import (
     Boolean,
@@ -67,6 +67,9 @@ from star_schema.utilities import (
 
 
 date_str_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}.*$")
+true_str_pattern = re.compile(".*true.*", re.IGNORECASE)
+false_str_pattern = re.compile(".*false.*", re.IGNORECASE)
+logger = rotating_log('constellation')
 
 
 def convert_value(*,
@@ -93,39 +96,78 @@ def convert_value(*,
         if isnan(value) or isinf(value):
             return None
 
-    def convert_date(date_val):
+    def convert_date(
+            date_val: Optional[Union[str, datetime.date, datetime.datetime]]
+        ) -> datetime.date:
+
         try:
             if not date_val:
                 return
             if isinstance(date_val, str):
                 if date_str_pattern.match(date_val):
                     return datetime.datetime.strptime(date_val[:10], "%Y-%m-%d").date()
-                print("{v} is not a valid date".format(v=date_val))
+                logger.debug(
+                    "convert_value: {v} is not a valid date"
+                    .format(v=date_val)
+                )
                 return
-                # raise ValueError("{v} is not a valid date".format(v=date_val))
             elif isinstance(date_val, datetime.date):
                 return date_val
             elif isinstance(date_val, datetime.datetime):
                 return date_val.date()
             return
         except Exception as e:
-            print("Error converting date value {} to a date; "
-                  "the current type is {}; error {}"\
-                  .format(date_val, type(date_val), str(e)))
+            logger.debug(
+                "convert_value: Error converting date value {} to a date; "
+                "the current type is {}; error {}"\
+                .format(date_val, type(date_val), str(e))
+            )
             return
+
+    def convert_bool(
+            bool_val: Optional[Union[str, int, bool]]
+        ) -> Optional[bool]:
+
+        try:
+            if not bool_val:
+                return None
+            elif isinstance(bool_val, bool):
+                return bool_val
+            elif isinstance(bool_val, int):
+                return bool(bool_val)
+            elif isinstance(bool_val, str):
+                if re.match(true_str_pattern, bool_val):
+                    return True
+                elif re.match(false_str_pattern, bool_val):
+                    return False
+                else:
+                    return None
+            else:
+                logger.debug(
+                    "convert_value: unable to convert value {} to bool"
+                    .format(bool_val)
+                )
+                return None
+        except Exception as e:
+            logger.debug(
+                "convert_value: unable to convert value {} to bool; error: {}"
+                .format(bool_val, str(e))
+            )
 
     conversion_functions = {
         FieldType.Date:  convert_date,
         FieldType.Float: lambda v: round(float(v), 2),
         FieldType.Int:   int,
         FieldType.Str:   str,
-        FieldType.Bool:  bool
+        FieldType.Bool:  convert_bool
     }
     try:
         return conversion_functions[field_type](value)
     except Exception as e:
-        print('Error converting value {} to data type {}; err:'
-              .format(value, field_type, str(e)))
+        logger.debug(
+            'convert_value: Error converting value {} to data type {}; err:'
+            .format(value, field_type, str(e))
+        )
         return None
 
 
@@ -134,7 +176,14 @@ def format_value(*,
         value: Optional[SqlDataType]=None,
         field_format: Optional[FieldFormat]=None
     ) -> SqlDataType:
-    """Format a string value to a string appropriate for display to the user"""
+
+    """Format a string value to a string appropriate for display to the user
+
+    :param field_type:      The FieldType enum value representing the data type of the field
+    :param value:           The value to format (can be None)
+    :param field_format:    The FieldFormat enum value representing the format to use.
+    :return:                The formatted value for display
+    """
     inferred_data_types = {
         FieldFormat.Accounting: FieldType.Float,
         FieldFormat.Bool:       FieldType.Bool,
@@ -164,7 +213,7 @@ def format_value(*,
             return None
         return formatters[format](converted_val)
     except Exception as e:
-        print(
+        logger.debug(
             'error formatting value,',
             'val:', value,
             'data_type:', data_type,
@@ -175,7 +224,17 @@ def format_value(*,
 
 @autorepr
 class Field:
-    """Instances of this class represent a column in a database table."""
+    """Instances of this class represent a column in a database table.
+
+    :param name:            Field name on the database table
+    :param dtype:           FieldType enum value representing data type
+    :param display_name:    Name to display on the field's header
+    :param field_format:    FieldFormat enum value indicating display format (e.g., decimal places)
+    :param filters:         List of FilterConfig's representing list of filters to show on query designer
+    :param editable:        Is this field editable?
+    :param primary_key:     Is this field the primary key of the table?
+    :param default_value:   When creating a new instance of the field, start with a default value for the field.
+    """
     def __init__(self, *,
         name: str,
         dtype: FieldType,
@@ -218,13 +277,23 @@ class AdditiveField:
     """A field that represents an aggregate of a Fact.
 
     This field type is only used with Views over a Star.
-    It mimics its base field except for the schema and editability"""
+    It mimics its base field except for the schema and editability.
+
+    :param base_field_display_name: the display name of the Star field to aggregate.
+                                    This can be a Field, SummaryField, or a
+                                    CalculatedField.
+    :param aggregate_display_name:  text to use for the output field's header
+    :param aggregate_func:          instance of SqlAlchemy func enum to aggregate
+                                    the field by
+    """
 
     def __init__(self, *,
         base_field_display_name: FieldName,
         aggregate_display_name: FieldName,
         aggregate_func: func=func.sum
     ) -> None:
+
+        self.logger = rotating_log('constellation.AdditiveField')
 
         self.base_field_display_name = base_field_display_name
         self.display_name = aggregate_display_name
@@ -238,15 +307,23 @@ class AdditiveField:
 
     @static_property
     def base_field(self) -> Field:
+        """The base field on the star to aggregate
+
+        The base field may, in fact, be a subquery rather than a simple field.
+        """
         if not self.star:
-            raise AttributeError('AdditiveField {} must be assigned a star before use.'
-                                 .format(self.display_name))
+            err_msg = 'AdditiveField {} must be assigned a star before use.' \
+                      .format(self.display_name)
+            self.logger.debug('base_field: {}'.format(err_msg))
+            raise AttributeError(err_msg)
         try:
             return self.star.fields_by_display_name[self.base_field_display_name]
         except KeyError:
-            print('Error creating additive field {}; '
-                  'unable to find base field named {}'
-                  .format(self.display_name, self.base_field_display_name))
+            self.logger.debug(
+                'base_field: Error creating additive field {}; '
+                'unable to find base field named {}'
+                .format(self.display_name, self.base_field_display_name)
+            )
 
     @static_property
     def dtype(self):
@@ -259,8 +336,10 @@ class AdditiveField:
         try:
             return dtypes[self.sqa_func]
         except KeyError:
-            print('Unable to find data type of AdditiveField {}'
-                  .format(self.display_name))
+            self.logger.debug(
+                'Unable to find data type of AdditiveField {}'
+                .format(self.display_name)
+            )
             return self.base_field.dtype
 
     @static_property
@@ -292,15 +371,19 @@ class AdditiveField:
 
     @static_property
     def schema(self):
+        """SqlAlchemy representation of the AdditiveField"""
         try:
             return self.aggregate_func(self.base_field.schema)\
                    .cast(self.sqa_dtype).label(self.display_name)
         except Exception as e:
-            print('error creating aggregate field {}; error: {}'
-                  .format(self.display_name, str(e)))
+            self.logger.debug(
+                'schema: Error creating aggregate field {}; error: {}'
+                .format(self.display_name, str(e))
+            )
 
     @static_property
     def sqa_dtype(self):
+        """SqlAlchemy data type to cast to inside queries"""
         lkp = {
             'avg': Float(14, 2),
             'count': Integer,
@@ -309,36 +392,53 @@ class AdditiveField:
         try:
             return lkp[self.sqa_func]
         except KeyError:
-            print('Unable to find sqa_dtype for AdditiveField {} sqa_func {}'
-                  .format(self.display_name, self.sqa_func))
+            self.logger.debug(
+                'sqa_dtype: Unable to find sqa_dtype for AdditiveField {} '
+                'sqa_func {}'.format(self.display_name, self.sqa_func)
+            )
 
     @static_property
     def sqa_func(self) -> str:
+        """The name of the SqlAlchemy name associated with the field"""
         try:
             return self.aggregate_func._FunctionGenerator__names[0]
         except KeyError:
-            print('Error looking up sqa_func for AdditiveField {}'
-                  .format(self.display_name))
+            self.logger.debug(
+                'sqa_func: Error looking up sqa_func for AdditiveField {}'
+                .format(self.display_name)
+            )
 
     @static_property
     def star(self):
+        """The Star this field belongs to"""
         if not self._star:
-            raise(AttributeError, "The star for AdditiveField {} was not"
-                                  "injected prior to calling the field."
-                                  .format(self.display_name))
+            err_msg = "The star for AdditiveField {} was not" \
+                      "injected prior to calling the field." \
+                      .format(self.display_name)
+            self.logger.debug('star: {}'.format(err_msg))
+            raise(AttributeError, err_msg)
         return self._star
 
     def validate_config(self):
+        """Validate that the additive settings on config.cfg for this
+        field meet certain criteria"""
         if self.sqa_func not in ['avg', 'count', 'sum']:
-            from star_schema.config import ConfigError
-            raise ConfigError('The function {} for AdditiveField {} is not '
-                              'implemented.'.format(self.sqa_func, self.display_name))
+            self.logger.debug(
+                'validate_config: The function {} for AdditiveField {} is not '
+                'implemented.'.format(self.sqa_func, self.display_name)
+            )
 
 
 @autorepr
 class Filter:
+    """Holding tank for data needed to construct WHERE clause for field
+
+    :param field:           base Field the filter is based on
+    :param operator:        Operator enum value to apply to field
+    :param default_value:   value to use in filter on initial load of app
+    """
     def __init__(self, *,
-        field, #: Field,
+        field: Field,
         operator: Operator,
         default_value: Optional[SqlDataType]=None
     ) -> None:
@@ -355,30 +455,37 @@ class Filter:
 
     @property
     def filter(self) -> BinaryExpression:
-        fld = self.field.schema
-        operator_mapping = {
-            Operator.number_equals: fld == self.value,
-            Operator.number_does_not_equal: fld != self.value,
-            Operator.number_greater_than: fld > self.value,
-            Operator.number_greater_than_or_equal_to: fld >= self.value,
-            Operator.number_less_than: fld < self.value,
-            Operator.number_less_than_or_equal_to: fld <= self.value,
+        if self.value is None:
+            return None
+        elif self.value == '':
+            return None
+        else:
+            fld = self.field.schema
+            operator_mapping = {
+                Operator.bool_is: lambda: self.field.schema == literal(self.value),
+                Operator.bool_is_not: lambda: self.field.schema != literal(self.value),
 
-            Operator.str_equals: fld == self.value,
-            Operator.str_like: fld.contains(self.value),
-            Operator.str_not_like: fld.notlike('%{}%'.format(self.value)),
-            Operator.str_starts_with: fld.startswith(self.value),
-            Operator.str_ends_with: fld.endswith(self.value),
+                Operator.number_equals: lambda: fld == self.value,
+                Operator.number_does_not_equal: lambda: fld != self.value,
+                Operator.number_greater_than: lambda: fld > self.value,
+                Operator.number_greater_than_or_equal_to: lambda: fld >= self.value,
+                Operator.number_less_than: lambda: fld < self.value,
+                Operator.number_less_than_or_equal_to: lambda: fld <= self.value,
 
-            Operator.date_after: func.date(fld) > self.value,
-            Operator.date_on_or_after: func.date(fld) >= self.value,
-            Operator.date_before: func.date(fld) < self.value,
-            Operator.date_on_or_before: func.date(fld) <= self.value,
-            Operator.date_equals: func.date(fld) == self.value,
-            Operator.date_does_not_equal: func.date(fld) != self.value
-        }
-        if self.value:
-            return operator_mapping[self.operator]
+                Operator.str_equals: lambda: fld == self.value,
+                Operator.str_like: lambda: fld.contains(self.value),
+                Operator.str_not_like: lambda: fld.notlike('%{}%'.format(self.value)),
+                Operator.str_starts_with: lambda: fld.startswith(self.value),
+                Operator.str_ends_with: lambda: fld.endswith(self.value),
+
+                Operator.date_after: lambda: func.date(fld) > self.value,
+                Operator.date_on_or_after: lambda: func.date(fld) >= self.value,
+                Operator.date_before: lambda: func.date(fld) < self.value,
+                Operator.date_on_or_before: lambda: func.date(fld) <= self.value,
+                Operator.date_equals: lambda: func.date(fld) == self.value,
+                Operator.date_does_not_equal: lambda: func.date(fld) != self.value
+            }
+            return operator_mapping[self.operator]()
 
     def __lt__(self, other) -> bool:
         return self.display_name < other.display_name
@@ -395,6 +502,7 @@ class Filter:
         """The slot that the associated filter control sends messages to."""
         self._value = value
 
+
 @autorepr
 class CalculatedField:
     """A field that represents the combination of one or more fields in a Star.
@@ -407,6 +515,8 @@ class CalculatedField:
         filters: Optional[List[FilterConfig]]=None,
         default_value: Optional[Any]=None
     ) -> None:
+
+        self.logger = rotating_log('constellation.CalculatedField')
 
         self.formula = formula
         self.display_name = display_name
@@ -447,8 +557,10 @@ class CalculatedField:
                     for flt in self._filters
                 ]
             except Exception as e:
-                print("Could not create filters for calculated field {}"
-                      "; error: {}".format(self.display_name, str(e)))
+                self.logger.debug(
+                    "filters: Could not create filters for calculated field {}"
+                    "; error: {}".format(self.display_name, str(e))
+                )
         return []
 
     @static_property
@@ -529,8 +641,10 @@ class CalculatedField:
         try:
             return self.evaluate_expression.label(self.display_name)
         except Exception as e:
-            print('error creating schema for calculated field {}; '
-                  'error: {}'.format(self.display_name, str(e)))
+            self.logger.debug(
+                'schema: Error creating schema for calculated field {}; '
+                'error: {}'.format(self.display_name, str(e))
+            )
 
     @static_property
     def primary_key(self):
@@ -540,16 +654,19 @@ class CalculatedField:
     @static_property
     def star(self):
         if not self._star:
-            raise(AttributeError, "The star for CalculatedField {} was not"
-                                  "injected prior to calling the field."
-                                  .format(self.display_name))
+            err_msg = "The star for CalculatedField {} was not" \
+                      "injected prior to calling the field." \
+                      .format(self.display_name)
+            self.logger.debug('star: {}'.format(err_msg))
+            raise(AttributeError, err_msg)
         return self._star
 
     def validate_config(self):
-        from star_schema.config import ConfigError
         if not self.formula:
-            raise ConfigError("The formula for CalculatedField {} is blank"
-                              .format(self.display_name))
+            self.logger.debug(
+                "validate_config: The formula for CalculatedField {} is blank"
+                .format(self.display_name)
+            )
 
 
 @autorepr
@@ -599,6 +716,8 @@ class Table:
         refresh_on_update: bool=False
     ) -> None:
 
+        self.logger = rotating_log('constellation.Table')
+
         self.table_name = table_name
         self.display_name = display_name
         self.fields = fields
@@ -630,8 +749,10 @@ class Table:
         try:
             return next(fld for fld in self.fields if fld.name == name)
         except StopIteration:
-            print('could not find table field named {} on table {}'
-                  .format(name, self.table_name))
+            self.logger.debug(
+                'field: Could not find table field named {} on table {}'
+                .format(name, self.table_name)
+            )
 
     @static_property
     def filters(self) -> List[Filter]:
@@ -647,7 +768,10 @@ class Table:
         try:
             return next(flt for flt in self.filters if flt.display_name == display_name)
         except StopIteration:
-            print('The filter named {} could not be found.'.format(display_name))
+            self.logger.debug(
+                'filter_by_display_name: The filter named {} could not be '
+                'found.'.format(display_name)
+            )
 
     @static_property
     def foreign_keys(self) -> Dict[ColumnIndex, Field]:
@@ -662,8 +786,10 @@ class Table:
         try:
             return next(c for c in self.schema.columns if c.primary_key is True)
         except StopIteration:
-            print('could not find the primary key for table {}'
-                  .format(self.table_name))
+            self.logger.debug(
+                'primary_key: Could not find the primary key for table {}'
+                .format(self.table_name)
+            )
 
     @static_property
     def primary_key_index(self) -> PrimaryKeyIndex:
@@ -673,8 +799,10 @@ class Table:
                      if c.primary_key)
             )
         except StopIteration:
-            print('could not find the primary key index for table {}'
-                  .format(self.table_name))
+            self.logger.debug(
+                'primary_key_index: could not find the primary key index for '
+                'table {}'.format(self.table_name)
+            )
 
     @static_property
     def schema(self) -> sqlaTable:
@@ -683,8 +811,10 @@ class Table:
             cols = [fld.schema for fld in self.fields]
             return sqlaTable(self.table_name, md, *cols)
         except Exception as e:
-            print('Error creating the schema for table {}; error: {}'
-                  .format(self.table_name, str(e)))
+            self.logger.debug(
+                'schema: Error creating the schema for table {}; error: {}'
+                .format(self.table_name, str(e))
+            )
 
     def update_row(self, *,
         pk: PrimaryKeyIndex,
@@ -741,8 +871,31 @@ class Dimension(Table):
 
     @static_property
     def display_field_schemas(self) -> List[Column]:
+        """Create the sqla schema to display for foreign key values
+        on the one-side of the tables relationship with another."""
+
+        def fld_schema(fld_name: FieldName):
+            """If the dimension is associated with another dimension
+            use the schema for the summary field of that dimension as
+            a part of the currend dimensions summary field schema."""
+            fld = self.field(fld_name)
+            if isinstance(fld, ForeignKey):
+                from star_schema.config import cfg
+                try:
+                    fk = next(
+                        dim for dim in cfg.dimensions
+                        if dim.table_name == fld.dimension
+                    )
+                    return fk.summary_field_schema.schema
+                except StopIteration:
+                    self.logger.error(
+                        'display_field_schema: Could not find a '
+                        'dimension for fk field {}.'.format(fld)
+                    )
+            return fld.schema
+
         return [
-            self.field(n).schema
+            fld_schema(n)
             for n in self.summary_field.display_fields
         ]
 
@@ -779,7 +932,13 @@ class Dimension(Table):
         the Fact table has to consider foreign keys so its select statement
         is composed at the Star level"""
         s = self.schema.select()
-        for f in (flt for flt in self.filters if flt.value):
+        filters_to_apply = (
+            flt for flt
+            in self.filters
+            if flt._value != ''
+                and flt._value is not None
+        )
+        for f in filters_to_apply:
             s = s.where(f.filter)
         if self.order_by_schema:
             for o in self.order_by_schema:
@@ -794,6 +953,7 @@ class Dimension(Table):
             dtype=FieldType.Str,
             field_format=FieldFormat.Str
         )
+
         fld.schema = reduce(
             lambda x, y: x + self.summary_field.separator + y,
             self.display_field_schemas).label(self.summary_field.display_name)
@@ -886,6 +1046,8 @@ class Star:
         fact: Fact,
         dimensions: List[Dimension]=None
     ) -> None:
+
+        self.logger = rotating_log('constellation.Star')
 
         self.fact = fact
         self._dimensions = dimensions
@@ -1025,7 +1187,10 @@ class Star:
                     qry = qry.order_by(o)
             return qry
         except Exception as e:
-            print('error composing star query: {}'.format(str(e)))
+            self.logger.debug(
+                'star_query: Error composing star query: {}'
+                .format(str(e))
+            )
 
 
 @autorepr
@@ -1040,6 +1205,8 @@ class View:
         order_by: Optional[List[OrderBy]] = None,
         show_on_load: bool=False
     ) -> None:
+
+        self.logger = rotating_log('constellation.View')
 
         self.display_name = view_display_name  # type: str
         self._fact_table_name = fact_table_name  # type: str
@@ -1071,10 +1238,16 @@ class View:
                         for fld in self.fields
                         if fld.display_name == display_name)
         except KeyError:
-            print('Error looking up field_by_display_name; could not find a field'
-                  'named {} in the View {}'.format(display_name, self.display_name))
+            self.logger.debug(
+                'field_by_display_name: Error looking up field_by_display_name; '
+                'could not find a field named {} in the View {}'
+                .format(display_name, self.display_name)
+            )
         except Exception as e:
-            print('Error looking up field_by_display_name: err {}'.format(str(e)))
+            self.logger.debug(
+                'field_by_display_name: Error looking up field_by_display_name: '
+                'err {}'.format(str(e))
+            )
 
     @property
     def filters(self) -> List[Filter]:
@@ -1117,8 +1290,10 @@ class View:
                     return fld.schema.asc()
                 return fld.schema.desc()
             except KeyError:
-                print('view.py: Unable to look up sort order for View {}, '
-                      'field {}.'.format(self.display_name, order_by.field_name))
+                self.logger.debug(
+                    'view.py: Unable to look up sort order for View {}, '
+                    'field {}.'.format(self.display_name, order_by.field_name)
+                )
 
         if self.order_by:
             return [
@@ -1143,8 +1318,9 @@ class View:
                     qry = qry.order_by(o)
             return qry.limit(self.star.display_rows)
         except Exception as e:
-            print('Error composing select statement for View {}; '
-                  'error {}'.format(self.display_name, str(e)))
+            self.logger.debug(
+                'select: Error composing select statement for View {}; '
+                'error {}'.format(self.display_name, str(e)))
 
 
 class Constellation:
@@ -1157,6 +1333,8 @@ class Constellation:
         views: List[View]
     ) -> None:
 
+        self.logger = rotating_log('constellation.Constellation')
+
         self.app = app
         self.dimensions = dimensions  # Optional[List[Dimension]]
         self.facts = facts  # type: List[Fact]
@@ -1165,7 +1343,6 @@ class Constellation:
             tbl.table_name: {}
             for tbl in dimensions
         }  # type: Dict[str, Dict[int, str]]
-        self.logger = rotating_log('constellation.Constelation')
 
     @static_property
     def stars(self) -> Dict[FactName, Star]:
@@ -1186,7 +1363,7 @@ class Constellation:
                 for tbl in self.dimensions
             }
         except Exception as e:
-            self.logger.error('foreign_key_lookups: error {}'
+            self.logger.debug('foreign_key_lookups: error {}'
                               .format(str(e)))
 
     def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue,
@@ -1201,12 +1378,12 @@ class Constellation:
                 fks[0] = ""
             return fks
         except KeyError:
-            self.logger.error('foreign_keys: '
-                  'Unable to find the Dimension {}; '
-                  .format(dim))
+            self.logger.debug(
+                'foreign_keys: Unable to find the Dimension {}; '
+                .format(dim)
+            )
         except Exception as e:
-            self.logger.error('foreign_keys: error {}; '
-                              .format(str(e)))
+            self.logger.debug('foreign_keys: error {}; '.format(str(e)))
 
     def pull_foreign_keys(self, dim: DimensionName) -> None:
         try:
@@ -1217,21 +1394,27 @@ class Constellation:
                 for row in fetch(select_statement)
             })
         except Exception as e:
-            print('error pulling foreign keys for dimension {}'
-                  .format(dim))
+            self.logger.debug(
+                'pull_foreign_keys: Error pulling foreign keys for dimension {}'
+                .format(dim)
+            )
 
     def star(self, fact_table: FactName) -> Star:
         """Return the specific Star system localized on a specific Fact table"""
         try:
             return self.stars[fact_table]
         except KeyError:
-            print('The fact table {} could not be found in the cfg global variable.'
-                  .format(fact_table))
+            self.logger.debug(
+                'star: The fact table {} could not be found in the cfg global '
+                'variable.'.format(fact_table)
+            )
 
     def view(self, view_name: ViewName) -> View:
         """Return the specified View"""
         try:
             return next(view for view in self.views if view.display_name == view_name)
         except StopIteration:
-            print('A view with the display name {} could not be found in the '
-                  'cfg global variable.'.format(view_name))
+            self.logger.debug(
+                'view: A view with the display name {} could not be found in '
+                'the cfg global variable.'.format(view_name)
+            )
