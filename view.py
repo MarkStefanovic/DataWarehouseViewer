@@ -586,11 +586,13 @@ class QueryDesigner(QtGui.QWidget):
             self.add_row(f)
 
         self.btn_reset_query = QtGui.QPushButton('&Reset Query')
+        self.btn_reset_query.setAutoDefault(False)
         self.btn_reset_query.clicked.connect(self.reset)
         self.layout.addWidget(self.btn_reset_query, self._current_row, 0, 1, 1)
 
         pull_btn_txt = 'Show'
         self.btn_pull = QtGui.QPushButton(pull_btn_txt)
+        self.btn_pull.setAutoDefault(True)
         self.btn_pull.clicked.connect(self.pull_signal.emit)
         self.layout.addWidget(self.btn_pull, self._current_row, 1, 1, 1)
         self._current_row += 1
