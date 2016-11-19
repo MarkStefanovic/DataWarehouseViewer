@@ -15,7 +15,7 @@ from sqlalchemy.sql import (
     Update
 )
 from sqlalchemy.sql.elements import BinaryExpression, literal
-from typing import Optional, List, Dict, Iterable, Any, Union
+from typing import Optional, List, Dict, Iterable, Any, Union, Callable
 
 from sqlalchemy import (
     Boolean,
@@ -57,8 +57,8 @@ from star_schema.custom_types import (
     SortOrder,
     ColumnIndex,
     PrimaryKeyIndex,
-    OrderBy
-)
+    OrderBy,
+    Validator)
 
 from star_schema.utilities import (
     static_property,
@@ -74,12 +74,21 @@ logger = rotating_log('constellation')
 
 def convert_value(*,
         field_type: FieldType,
-        value: Optional[SqlDataType]=None
+        value: Optional[SqlDataType]=None,
+        validator: Optional[Validator]=None
     ) -> SqlDataType:
     """Convert a string value to a Python data type
 
     This conversion function is used to translate user input to a form that
-    sqlalchemy can use."""
+    sqlalchemy can use.
+    """
+
+    def raise_err():
+        err_msg = "Unable to convert value {} to {}" \
+                  .format(value, field_type)
+        logger.debug("convert_value: {}".format(err_msg))
+        raise ValueError(err_msg)
+
     default_values = {
         FieldType.Int:   0,
         FieldType.Str:   '',
@@ -94,81 +103,72 @@ def convert_value(*,
         return default_values[field_type]
     if isinstance(value, float):
         if isnan(value) or isinf(value):
-            return None
+            raise_err()
 
-    def convert_date(
-            date_val: Optional[Union[str, datetime.date, datetime.datetime]]
-        ) -> datetime.date:
-
+    def convert_date(date_val: Optional[SqlDataType]) -> datetime.date:
         try:
-            if not date_val:
-                return
             if isinstance(date_val, str):
                 if date_str_pattern.match(date_val):
                     return datetime.datetime.strptime(date_val[:10], "%Y-%m-%d").date()
-                logger.debug(
-                    "convert_value: {v} is not a valid date"
-                    .format(v=date_val)
-                )
-                return
+                else:
+                    raise_err()
             elif isinstance(date_val, datetime.date):
                 return date_val
             elif isinstance(date_val, datetime.datetime):
                 return date_val.date()
-            return
+            else:
+                raise_err()
         except Exception as e:
-            logger.debug(
-                "convert_value: Error converting date value {} to a date; "
-                "the current type is {}; error {}"\
-                .format(date_val, type(date_val), str(e))
-            )
-            return
+            raise_err()
 
     def convert_bool(
-            bool_val: Optional[Union[str, int, bool]]
+            bool_val: Optional[SqlDataType]
         ) -> Optional[bool]:
 
         try:
-            if not bool_val:
-                return None
-            elif isinstance(bool_val, bool):
+            if isinstance(bool_val, bool):
                 return bool_val
-            elif isinstance(bool_val, int):
-                return bool(bool_val)
+            elif isinstance(bool_val, int) or isinstance(bool_val, float):
+                v = int(bool_val)
+                if v in [0, 1]:
+                    return bool(int(bool_val))
+                else:
+                    raise_err()
             elif isinstance(bool_val, str):
                 if re.match(true_str_pattern, bool_val):
                     return True
                 elif re.match(false_str_pattern, bool_val):
                     return False
                 else:
-                    return None
+                    raise_err()
             else:
-                logger.debug(
-                    "convert_value: unable to convert value {} to bool"
-                    .format(bool_val)
-                )
-                return None
-        except Exception as e:
-            logger.debug(
-                "convert_value: unable to convert value {} to bool; error: {}"
-                .format(bool_val, str(e))
-            )
+                raise_err()
+        except:
+            raise_err()
+
+    def convert_float(float_val: Optional[SqlDataType]) -> bool:
+        try:
+            return round(float(float_val), 2)
+        except:
+            raise_err()
+
 
     conversion_functions = {
         FieldType.Date:  convert_date,
-        FieldType.Float: lambda v: round(float(v), 2),
+        FieldType.Float: convert_float,
         FieldType.Int:   int,
         FieldType.Str:   str,
         FieldType.Bool:  convert_bool
     }
     try:
-        return conversion_functions[field_type](value)
-    except Exception as e:
-        logger.debug(
-            'convert_value: Error converting value {} to data type {}; err:'
-            .format(value, field_type, str(e))
-        )
-        return None
+        cval = conversion_functions[field_type](value)
+        if validator:
+            valid = validator(cval)
+            if valid[0]:
+                raise ValueError(valid[1])
+        return cval
+    except:
+        raise_err()
 
 
 def format_value(*,
@@ -213,13 +213,10 @@ def format_value(*,
             return None
         return formatters[format](converted_val)
     except Exception as e:
-        logger.debug(
-            'error formatting value,',
-            'val:', value,
-            'data_type:', data_type,
-            'error msg:', str(e)
-        )
-        return value
+        err_msg = "Error formatting value {}, type {}".format(value, data_type)
+        logger.debug('format_value: {}'.format(err_msg))
+        raise ValueError(err_msg)
+        # return value
 
 
 @autorepr
@@ -234,6 +231,10 @@ class Field:
     :param editable:        Is this field editable?
     :param primary_key:     Is this field the primary key of the table?
     :param default_value:   When creating a new instance of the field, start with a default value for the field.
+    :param visible          Display the field on the views?
+    :param validator        Function to run when upddating adding rows
+                            If the function returns False for the value
+                            of the field then the transaction will be rejected.
     """
     def __init__(self, *,
         name: str,
@@ -243,7 +244,9 @@ class Field:
         filters: Optional[List[FilterConfig]]=None,
         editable: bool=True,
         primary_key: bool=False,
-        default_value: Any=None
+        default_value: Any=None,
+        visible: bool=True,
+        validator: Optional[Validator]=None
     ) -> None:
 
         self.name = name
@@ -254,6 +257,8 @@ class Field:
         self.primary_key = primary_key
         self.filters = filters
         self.default_value = default_value
+        self.visible = visible
+        self.validator = validator
 
     @static_property
     def schema(self) -> Column:
@@ -285,12 +290,14 @@ class AdditiveField:
     :param aggregate_display_name:  text to use for the output field's header
     :param aggregate_func:          instance of SqlAlchemy func enum to aggregate
                                     the field by
+    :param visible                  Display the field on the views?
     """
 
     def __init__(self, *,
         base_field_display_name: FieldName,
         aggregate_display_name: FieldName,
-        aggregate_func: func=func.sum
+        aggregate_func: func=func.sum,
+        visible: bool=True
     ) -> None:
 
         self.logger = rotating_log('constellation.AdditiveField')
@@ -298,6 +305,7 @@ class AdditiveField:
         self.base_field_display_name = base_field_display_name
         self.display_name = aggregate_display_name
         self.aggregate_func = aggregate_func
+        self.visible = visible
 
         # The star property is injected by the Star itself later.
         # It must be populated before this field can be used.
@@ -507,13 +515,24 @@ class Filter:
 class CalculatedField:
     """A field that represents the combination of one or more fields in a Star.
 
-    It mimics its base field except for the schema and editability"""
+    It mimics its base field except for the schema and editability
+
+    :param formula:             String formula using field display names
+    :param display_name:        Name of field to display on header
+    :param show_on_fact_table:  Show this field on the main fact table view
+                                Fields that are merely used as intermediates may
+                                be not be useful to show.
+    :param filters:             Filters to display on QueryDesigner for this field
+    :param default_value:       Default value to display when a new record is added
+    :param visible              Display the field on the views?
+    """
     def __init__(self, *,
         formula: str,
         display_name: FieldName,
         show_on_fact_table: bool=True,
         filters: Optional[List[FilterConfig]]=None,
-        default_value: Optional[Any]=None
+        default_value: Optional[SqlDataType]=None,
+        visible: bool=True
     ) -> None:
 
         self.logger = rotating_log('constellation.CalculatedField')
@@ -523,6 +542,7 @@ class CalculatedField:
         self.show_on_fact_table = show_on_fact_table
         self.default_value = default_value
         self._filters = filters
+        self.visible = visible
 
         # The star property is injected by the Star itself later.
         # It must be populated before this field can be used.
@@ -680,7 +700,8 @@ class SummaryField(Field):
             display_fields: List[str],
             display_name: str,
             separator: str = ' ',
-            filters: Optional[List[FilterConfig]]=None
+            filters: Optional[List[FilterConfig]]=None,
+            visible: bool=True
     ) -> None:
 
         super(SummaryField, self).__init__(
@@ -690,12 +711,14 @@ class SummaryField(Field):
             field_format=FieldFormat.Str,
             filters=filters,
             editable=False,
-            primary_key=False
+            primary_key=False,
+            visible=visible
         )
 
         self.display_fields = display_fields
         self.display_name = display_name
         self.separator = separator
+        self.visible = visible
 
 
 @autorepr
@@ -966,7 +989,8 @@ class ForeignKey(Field):
             name: str,
             display_name: str,
             dimension: DimensionName,
-            foreign_key_field: str
+            foreign_key_field: str,
+            visible: bool=True
     ) -> None:
 
         super(ForeignKey, self).__init__(
@@ -975,11 +999,13 @@ class ForeignKey(Field):
             display_name=display_name,
             filters=None,  # filters for fks are created on the Star
             editable=True,
-            primary_key=False
+            primary_key=False,
+            visible=visible
         )
 
         self.dimension = dimension
         self.foreign_key_field = foreign_key_field  # name of id field on dim
+        self.visible = visible
 
     @static_property
     def schema(self) -> Column:
