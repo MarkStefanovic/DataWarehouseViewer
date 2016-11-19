@@ -1,4 +1,5 @@
 import datetime
+import os
 
 from sqlalchemy import func
 
@@ -24,9 +25,10 @@ from star_schema.custom_types import (
 )
 
 
-class DefaultDates:
-    now = datetime.datetime.now().isoformat()
-    today = datetime.datetime.today().strftime("%Y-%m-%d")
+class Defaults:
+    Now = datetime.datetime.now().isoformat()
+    Today = datetime.datetime.today().strftime("%Y-%m-%d")
+    Username = os.getlogin()
 
 
 class ConfigError(Exception):
@@ -665,6 +667,43 @@ cfg = Constellation(
     ),
     dimensions=[
         Dimension(
+            table_name='dimGenre',
+            display_name='Genres',
+            editable=True,
+            show_on_load=True,
+            fields=[
+                Field(
+                    name='ID',
+                    dtype=FieldType.Int,
+                    display_name='Genre ID',
+                    primary_key=True
+                ),
+                Field(
+                    name='Genre',
+                    dtype=FieldType.Str,
+                    display_name='Genre',
+                    filters=[]
+                )
+            ],
+            summary_field=SummaryField(
+                display_fields=['Genre'],
+                display_name='Genre',
+                separator=' - ',
+                filters=[
+                    FilterConfig(
+                        operator=Operator.str_like,
+                        default_value=''
+                    )
+                ]
+            ),
+            order_by=[
+                OrderBy(
+                    field_name='Genre',
+                    sort_order=SortOrder.Ascending
+                )
+            ]
+        ),
+        Dimension(
             table_name='dimPublication',
             display_name='Publications',
             editable=True,
@@ -687,22 +726,90 @@ cfg = Constellation(
                         )
                     ]
                 ),
+                ForeignKey(
+                    name='GenreID',
+                    display_name='Publication Genre',
+                    dimension='dimGenre',
+                    foreign_key_field='ID',
+                    visible=True
+                ),
+                # Field(
+                #     name='PublicationGenres',
+                #     dtype=FieldType.Str,
+                #     display_name='Genres',
+                #     filters=[
+                #         FilterConfig(
+                #             operator=Operator.str_like,
+                #             default_value=''
+                #         )
+                #     ]
+                # ),
                 Field(
-                    name='PublicationGenres',
-                    dtype=FieldType.Str,
-                    display_name='Genres',
+                    name='SimultaneousSubmissions',
+                    dtype=FieldType.Bool,
+                    display_name='Simultaneous Submissions',
+                    default_value=False,
                     filters=[
                         FilterConfig(
-                            operator=Operator.str_like,
+                            operator=Operator.bool_is,
                             default_value=''
                         )
                     ]
                 ),
                 Field(
-                    name='SimultaneousSubmissions',
+                    name='PreferredScore',
+                    dtype=FieldType.Int,
+                    display_name='Pref.Score: 1-5',
+                    default_value=1,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=1
+                        )
+                    ]
+                ),
+                Field(
+                    name='MinimumWordCount',
+                    dtype=FieldType.Int,
+                    display_name='Min Word Ct',
+                    default_value=50,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.number_less_than_or_equal_to,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='MaximumWordCount',
+                    dtype=FieldType.Int,
+                    display_name='Max Word Ct',
+                    default_value=10000,
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        ),
+                        FilterConfig(
+                            operator=Operator.number_less_than_or_equal_to,
+                            default_value=''
+                        )
+                    ]
+                ),
+                Field(
+                    name='UnderConsideration',
                     dtype=FieldType.Bool,
-                    display_name='Simultaneous Submissions',
-                    filters=[]
+                    display_name='Under Consideration',
+                    filters=[
+                        FilterConfig(
+                            operator=Operator.bool_is,
+                            default_value=''
+                        )
+                    ]
                 ),
                 Field(
                     name='Notes',
@@ -716,9 +823,19 @@ cfg = Constellation(
                         )
                     ]
                 ),
+                Field(
+                    name='DateAdded',
+                    dtype=FieldType.Str,
+                    editable=False,
+                    display_name='Date Added',
+                    default_value=Defaults.Today,
+                    field_format=FieldFormat.Date,
+                    filters=[],
+                    visible=True
+                )
             ],
             summary_field=SummaryField(
-                display_fields=['PublicationName', 'PublicationGenres'],
+                display_fields=['PublicationName', 'GenreID'],
                 display_name='Publication',
                 separator=' - ',
                 filters=[
@@ -758,22 +875,28 @@ cfg = Constellation(
                         )
                     ]
                 ),
-                Field(
-                    name='Genres',
-                    dtype=FieldType.Str,
-                    display_name='Genre(s)',
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
+                ForeignKey(
+                    name='GenreID',
+                    display_name='Genre',
+                    dimension='dimGenre',
+                    foreign_key_field='ID'
                 ),
+                # Field(
+                #     name='Genres',
+                #     dtype=FieldType.Str,
+                #     display_name='Genre(s)',
+                #     filters=[
+                #         FilterConfig(
+                #             operator=Operator.str_like,
+                #             default_value=''
+                #         )
+                #     ]
+                # ),
                 Field(
                     name='DateFinished',
                     dtype=FieldType.Date,
                     display_name='Date Finished',
-                    default_value=DefaultDates.today,
+                    default_value=Defaults.Today,
                     filters=[
                         FilterConfig(
                             operator=Operator.date_on_or_after,
@@ -813,9 +936,19 @@ cfg = Constellation(
                         )
                     ]
                 ),
+                Field(
+                    name='DateAdded',
+                    dtype=FieldType.Str,
+                    editable=False,
+                    display_name='Date Added',
+                    default_value=Defaults.Today,
+                    field_format=FieldFormat.Date,
+                    filters=[],
+                    visible=True
+                )
             ],
             summary_field=SummaryField(
-                display_fields=['Title', 'Genres'],
+                display_fields=['Title', 'GenreID'],
                 display_name='Story',
                 separator=' - ',
                 filters=[
@@ -911,7 +1044,7 @@ cfg = Constellation(
                     name='DateSubmitted',
                     dtype=FieldType.Date,
                     display_name='Date Submitted',
-                    default_value=DefaultDates.today,
+                    default_value=Defaults.Today,
                     filters=[
                         FilterConfig(
                             operator=Operator.date_on_or_before,
@@ -929,10 +1062,10 @@ cfg = Constellation(
                     display_name='Revenue',
                     field_format=FieldFormat.Accounting,
                     filters=[
-                        # FilterConfig(
-                        #     operator=Operator.number_greater_than_or_equal_to,
-                        #     default_value='0.00'
-                        # )
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        )
                     ]
                 ),
                 Field(
@@ -941,10 +1074,10 @@ cfg = Constellation(
                     display_name='Expenses',
                     field_format=FieldFormat.Accounting,
                     filters=[
-                        # FilterConfig(
-                        #     operator=Operator.number_greater_than_or_equal_to,
-                        #     default_value='0.00'
-                        # )
+                        FilterConfig(
+                            operator=Operator.number_greater_than_or_equal_to,
+                            default_value=''
+                        )
                     ]
                 ),
                 Field(
@@ -971,6 +1104,16 @@ cfg = Constellation(
                         )
                     ]
                 ),
+                Field(
+                    name='DateAdded',
+                    dtype=FieldType.Str,
+                    editable=False,
+                    display_name='Date Added',
+                    default_value=Defaults.Today,
+                    field_format=FieldFormat.Date,
+                    filters=[],
+                    visible=True
+                )
             ],
             calculated_fields=[
                 CalculatedField(
