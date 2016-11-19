@@ -4,6 +4,8 @@ from collections import namedtuple, OrderedDict
 from functools import partial
 import os
 from itertools import chain
+
+from PyQt4.QtGui import QComboBox
 from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
@@ -22,6 +24,7 @@ from star_schema.constellation import (
     FieldType,
     View,
     convert_value)
+from star_schema.custom_types import Operator
 from utilities import rootdir, timestr, timestamp
 
 
@@ -281,7 +284,7 @@ class DatasheetView(QtGui.QWidget):
                 for flt in self.model.query_manager.base.filters
                 if flt.display_name == name
             )
-            val = txt.text()
+            val = self.query_designer.get_text(txt) # txt.text()
             if val:
                 try:
                     cval = convert_value(field_type=fld.dtype, value=val)
@@ -588,18 +591,23 @@ class QueryDesigner(QtGui.QWidget):
 
     def add_row(self, filter: Filter) -> None:
         lbl = QtGui.QLabel(filter.display_name)
-        txt = QtGui.QLineEdit()
+        if filter.operator in [Operator.bool_is, Operator.bool_is_not]:
+            txt = QComboBox()
+            txt.addItems(['', 'True', 'False'])
+        else:
+            txt = QtGui.QLineEdit()
         self.filter_refs[filter.display_name] = txt
         self.query_controls[self._current_row] = txt
 
         self.layout.addWidget(lbl, self._current_row, 0, 1, 1)
         self.layout.addWidget(txt, self._current_row, 1, 1, 1)
 
-        cmd = lambda v=txt.text(), n=self._current_row, func=self.add_criteria:\
-            func(filter_ix=n, value=v)
-        txt.textChanged.connect(cmd)
-
         self._current_row += 1
+
+    def get_text(self, txt):
+        if isinstance(txt, QComboBox):
+            return txt.currentText()
+        return txt.text()
 
     def add_criteria(self, filter_ix: int, value: str) -> None:
         self.add_criteria_signal.emit(filter_ix, value)
