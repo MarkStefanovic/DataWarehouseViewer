@@ -385,8 +385,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 field_type=self.query_manager.fields[ix.column()].dtype,
                 value=value
             )
-        except:
-            pass
+        except Exception as e:
+            self.error_signal.emit(str(e))
+            return False
         try:
             pk = self.visible_data[ix.row()][self.query_manager.table.primary_key_index]
             row = next(
@@ -398,7 +399,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
             self.modified_data[row][ix.column()] = value
             self.dataChanged.emit(ix, ix)
             return True
-        except:
+        except Exception as e:
+            self.error_signal.emit(str(e))
             return False
 
     def sort(self, col: ColumnIndex, order: int) -> None:
