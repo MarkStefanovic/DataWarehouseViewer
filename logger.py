@@ -40,13 +40,14 @@ def rotating_log(name: str='main') -> logging.Logger:
         'D' 	    Days
         'W0'-'W6' 	Weekday (0=Monday)
         'midnight' 	Roll over at midnight
-        '''
+    '''
     file_handler.setLevel(logging.ERROR)
     file_handler.setFormatter(formatter)
     logger = logging.getLogger(name)
     logger.addHandler(file_handler)
     logger.setLevel(logging.ERROR)
     if DEBUG:
+        logger.setLevel(logging.DEBUG)
         stream_handler = StreamHandler(stream=sys.stderr)
         stream_handler.setLevel(logging.DEBUG)
         stream_handler.setFormatter(formatter)
@@ -87,7 +88,7 @@ def log_error(func) -> Callable:
     return wrapper
 
 
-# if __name__ == '__main__':
-#     import doctest
-#     doctest.ELLIPSIS_MARKER = '*etc*'
-#     doctest.testmod()
+if __name__ == '__main__':
+    import doctest
+    doctest.ELLIPSIS_MARKER = '*etc*'
+    doctest.testmod()
