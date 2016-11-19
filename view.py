@@ -4,7 +4,6 @@ from collections import namedtuple, OrderedDict
 from functools import partial
 import os
 from itertools import chain
-
 from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
@@ -21,8 +20,8 @@ from star_schema.constellation import (
     Filter,
     Table,
     FieldType,
-    View
-)
+    View,
+    convert_value)
 from utilities import rootdir, timestr, timestamp
 
 
@@ -143,8 +142,8 @@ class DatasheetView(QtGui.QWidget):
                     self.table.setItemDelegateForColumn(i, chk_box)
                 except Exception as e:
                     self.logger.debug(
-                        'error creating checkbox delegate for field index {}'
-                        .format(str(e))
+                        'add_boolean_checkboxes: Error creating checkbox '
+                        'delegate for field index {}'.format(str(e))
                     )
 
     def add_foreign_key_comboboxes(self) -> None:
@@ -211,12 +210,16 @@ class DatasheetView(QtGui.QWidget):
             selected_ids.append(id)
         return selected_ids
 
-    def hide_pk(self):
+    def hide_pk(self) -> None:
         pk = self.model.query_manager.table.primary_key_index
         # views don't include the primary key, so we don't try and hide the
         # primary key on views
         if pk >= 0:
             self.table.hideColumn(pk)
+
+        for ix, fld in enumerate(self.model.query_manager.fields):
+            if not fld.visible:
+                self.table.hideColumn(ix)
 
     def hide_query_designer(self):
         self.layout.removeItem(self.query_designer)
@@ -269,6 +272,26 @@ class DatasheetView(QtGui.QWidget):
 
     def pull(self):
         self.set_status("{}: Pulling".format(timestr()))
+
+        for i, filter in enumerate(self.model.query_manager.filters):
+            name = filter.display_name
+            txt = self.query_designer.filter_refs[name]
+            fld = next(
+                flt.field
+                for flt in self.model.query_manager.base.filters
+                if flt.display_name == name
+            )
+            val = txt.text()
+            if val:
+                try:
+                    cval = convert_value(field_type=fld.dtype, value=val)
+                    self.query_designer.add_criteria(filter_ix=i, value=str(cval)) #txt.text())
+                except:
+                    self.set_status(
+                        "Invalid input: {} is not a {}"
+                        .format(val, fld.dtype)
+                    )
+                    return
         self.model.pull()
 
     def contextMenuEvent(self, event):
@@ -533,7 +556,6 @@ class DatasheetView(QtGui.QWidget):
 
     def reset_status(self):
         self.set_status('Query results reset')
-        # self.statusbar.showMessage("")
 
     def undo(self):
         self.set_status('Changes undone')
@@ -561,6 +583,7 @@ class QueryDesigner(QtGui.QWidget):
         self.setLayout(self.layout)
         self.query_controls = {}
         self.filter_refs = {}
+        self.filter_ixs = {}
         self.create_controls()
 
     def add_row(self, filter: Filter) -> None:
@@ -598,11 +621,13 @@ class QueryDesigner(QtGui.QWidget):
         self._current_row += 1
 
         self.btn_stop_export = QtGui.QPushButton("Stop Export")
+        self.btn_stop_export.setAutoDefault(False)
         self.btn_stop_export.clicked.connect(self.stop_export_signal.emit)
         self.layout.addWidget(self.btn_stop_export, self._current_row, 0, 1, 1)
 
         export_btn_txt = 'Export'
         self.btn_export = QtGui.QPushButton(export_btn_txt)
+        self.btn_export.setAutoDefault(False)
         self.btn_export.clicked.connect(self.export_signal.emit)
         self.layout.addWidget(self.btn_export, self._current_row, 1, 1, 1)
 
@@ -719,21 +744,23 @@ class MainView(QtGui.QDialog):
             self.tab_filters_loaded.add(tab_index)
 
     @QtCore.pyqtSlot(int)
-    def load_tab(self, tab_index: int):
+    def load_tab(self, tab_index: int) -> None:
         """If the table is set to show on load, load it the first time the tab is clicked"""
         self._current_tab_index = tab_index
         self.apply_default_filters(tab_index)
-        pre_load = self.tab_indices[tab_index].table_ref.show_on_load
+        tab = self.tab_indices[tab_index]
+        ds = tab.ds_ref
+        ds.query_designer.btn_pull.setDefault(True)
+        pre_load = tab.table_ref.show_on_load
         if pre_load and tab_index not in self.tabs_loaded:
             # load the tab
-            ds = self.tab_indices[tab_index].ds_ref
             base = ds.model.query_manager.base
             ds.query_designer.pull_signal.emit()
             if not isinstance(base, View):
                 # we want the view to reload everytime we open it
                 self.tabs_loaded.add(tab_index)
 
-    def open_output_folder(self):
+    def open_output_folder(self) -> None:
         folder = os.path.join(rootdir(), 'output')
         if not os.path.exists(folder) or not os.path.isdir(folder):
             os.mkdir(folder)
@@ -744,7 +771,7 @@ class MainView(QtGui.QDialog):
     #     # self.config_popup.setGeometry(QtCore.QRect(100, 100, 400, 200))
     #     self.config_popup.show()
 
-    def toggle_query_designer(self):
+    def toggle_query_designer(self) -> None:
         if self.query_designer_visibility:
             for ds in self.datasheet_controls:
                 ds.layout.setColumnStretch(0, 0)
