@@ -551,7 +551,7 @@ class DatasheetView(QtGui.QWidget):
 
     @QtCore.pyqtSlot(int)
     def show_rows_exported(self, msg):
-        self.set_status('Rows exported {}...'.format(msg))
+        self.set_status('Rows exported {}'.format(msg))
 
     @QtCore.pyqtSlot(str)
     def show_rows_returned(self, msg):
