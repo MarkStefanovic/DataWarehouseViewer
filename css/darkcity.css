@@ -82,6 +82,7 @@ QAbstractItemView
     /*alternate-background-color: rgb(70, 70, 70);*/
     border-style: transparent;
 
+
 }
 
 QWidget:focus
@@ -99,10 +100,17 @@ QLineEdit
     color: black;
 }
 
+
 QPushButton
 {
     color: rgb(200, 200, 200);
-    background-color: QLinearGradient( x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #404040, stop: 0.2 #303030, stop: 0.5 #101010, stop: 0.6 #050505, stop: 0.8 #101010, stop: 1 #202020);
+    background-color: QLinearGradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 #404040,
+                                      stop: 0.2 #303030,
+                                      stop: 0.5 #101010,
+                                      stop: 0.6 #050505,
+                                      stop: 0.8 #101010,
+                                      stop: 1 #202020);
     border-width: 1px;
     border-color: black;
     border-style: solid;
@@ -112,19 +120,35 @@ QPushButton
     padding-left: 5px;
     padding-right: 5px;
 }
-
+QPushButton:default
+{
+    border-color: darkcyan;
+    /*background-color: QLinearGradient(x1: 0, y1: 0, x2: 0, y2: 1,*/
+                                      /*stop: 0 #606060,*/
+                                      /*stop: 0.2 #505050,*/
+                                      /*stop: 0.5 #303030,*/
+                                      /*stop: 0.6 #252525,*/
+                                      /*stop: 0.8 #303030,*/
+                                      /*stop: 1 #404040);*/
+}
 QPushButton:pressed
 {
-    background-color: QLinearGradient( x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #2d2d2d, stop: 0.1 #2b2b2b, stop: 0.5 #292929, stop: 0.9 #282828, stop: 1 #252525);
+    background-color: QLinearGradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 #2d2d2d,
+                                      stop: 0.1 #2b2b2b,
+                                      stop: 0.5 #292929,
+                                      stop: 0.9 #282828,
+                                      stop: 1 #252525);
 }
 
 QComboBox
 {
     selection-background-color: #ffaa00;
-    background-color:  QLinearGradient( x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #202020, stop: 0.1 #101010, stop: 0.9 #101010, stop: 1 #000000);
+    background-color: rgb(200, 200, 200);
     border-style: solid;
     border: 1px solid #1e1e1e;
     border-radius: 5;
+    color: black;
 }
 
 QComboBox:hover,QPushButton:hover
@@ -281,7 +305,10 @@ QPlainTextEdit
 
 QHeaderView::section
 {
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgb(10, 10, 10), stop: 0.4 rgb(40, 40, 40), stop:1 black);
+    background-color: QLinearGradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 rgb(10, 10, 10),
+                                      stop: 0.4 rgb(40, 40, 40),
+                                      stop: 1 black);
     color: rgb(240, 240, 240);
     padding-left: 4px;
     border: 1px solid #6c6c6c;
@@ -296,14 +323,20 @@ QDockWidget::title
 {
     text-align: center;
     spacing: 3px; /* spacing between items in the tool bar */
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 #323232, stop: 0.5 #242424, stop:1 #323232);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop: 0 #323232,
+                                      stop: 0.5 #242424,
+                                      stop: 1 #323232);
 }
 
 QDockWidget::close-button, QDockWidget::float-button
 {
     text-align: center;
     spacing: 1px; /* spacing between items in the tool bar */
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 #323232, stop: 0.5 #242424, stop:1 #323232);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop:0 #323232,
+                                      stop: 0.5 #242424,
+                                      stop:1 #323232);
 }
 
 QDockWidget::close-button:hover, QDockWidget::float-button:hover
@@ -318,7 +351,11 @@ QDockWidget::close-button:pressed, QDockWidget::float-button:pressed
 
 QMainWindow::separator
 {
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 #161616, stop: 0.5 #151515, stop: 0.6 #212121, stop:1 #343434);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop: 0 #161616,
+                                      stop: 0.5 #151515,
+                                      stop: 0.6 #212121,
+                                      stop: 1.0 #343434);
     color: white;
     padding-left: 4px;
     border: 1px solid #4c4c4c;
@@ -328,7 +365,10 @@ QMainWindow::separator
 QMainWindow::separator:hover
 {
 
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d7801a, stop:0.5 #b56c17 stop:1 #ffa02f);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop: 0 #d7801a,
+                                      stop: 0.5 #b56c17,
+                                      stop: 1.0 #ffa02f);
     color: white;
     padding-left: 4px;
     border: 1px solid #6c6c6c;
@@ -337,14 +377,18 @@ QMainWindow::separator:hover
 
 QToolBar::handle
 {
-        spacing: 3px; /* spacing between items in the tool bar */
-        background: url(:/images/handle.png);
+    spacing: 3px; /* spacing between items in the tool bar */
+    background: url(:/images/handle.png);
 }
 
 QMenu::separator
 {
     height: 2px;
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:0 #161616, stop: 0.5 #151515, stop: 0.6 #212121, stop:1 #343434);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop: 0 #161616,
+                                      stop: 0.5 #151515,
+                                      stop: 0.6 #212121,
+                                      stop:1 #343434);
     color: white;
     padding-left: 4px;
     margin-left: 10px;
@@ -391,8 +435,6 @@ QTabBar::tab:last
 QTabBar::tab:first:!selected
 {
     margin-left: 0px; /* the last selected tab has nothing to overlap with on the right */
-
-
     border-top-left-radius: 3px;
 }
 
@@ -401,7 +443,7 @@ QTabBar::tab:!selected
     color: #b1b1b1;
     border-bottom-style: solid;
     margin-top: 3px;
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:1 #212121, stop:.4 #343434);
+    background-color: #161616;
 }
 
 QTabBar::tab:selected
@@ -409,6 +451,14 @@ QTabBar::tab:selected
     border-top-left-radius: 3px;
     border-top-right-radius: 3px;
     margin-bottom: 0px;
+    background-color:
+        QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                        stop: 0.0 #707070,
+                        stop: 0.1 #555555,
+                        stop: 0.3 #404040,
+                        stop: 0.8 #353535,
+                        stop: 0.9 #252525,
+                        stop: 1.0 #202020);
 }
 
 QTabBar::tab:!selected:hover
@@ -417,7 +467,11 @@ QTabBar::tab:!selected:hover
     padding-bottom: 3px;*/
     border-top-left-radius: 3px;
     border-top-right-radius: 3px;
-    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1, stop:1 #212121, stop:0.4 #343434, stop:0.2 #343434, stop:0.1 #ffaa00);
+    background-color: QLinearGradient(x1:0, y1:0, x2:0, y2:1,
+                                      stop:1 #212121,
+                                      stop:0.4 #343434,
+                                      stop:0.2 #343434,
+                                      stop:0.03 darkcyan);
 }
 
 QRadioButton::indicator:checked, QRadioButton::indicator:unchecked{
