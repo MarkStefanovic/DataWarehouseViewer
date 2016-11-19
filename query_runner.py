@@ -1,6 +1,8 @@
 from PyQt4 import QtCore
 import time
 
+from sqlalchemy.sql import Select
+
 from star_schema.db import fetch
 from logger import log_error
 
@@ -15,9 +17,13 @@ class QueryRunnerSignals(QtCore.QObject):
 
 class QueryRunnerThread(QtCore.QThread):
 
-    def __init__(self, query: str, show_rows_returned: bool=True) -> None:
+    def __init__(self,
+        query: Select,
+        show_rows_returned: bool=True
+    ) -> None:
+
         super(QueryRunnerThread, self).__init__()
-        self.query = query  # type: str
+        self.query = query  # type: Select
         self.signals = QueryRunnerSignals()
         self.start_time = time.time()
         self.show_rows_returned = show_rows_returned
