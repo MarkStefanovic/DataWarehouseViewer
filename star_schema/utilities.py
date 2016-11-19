@@ -4,6 +4,9 @@ from reprlib import recursive_repr
 import time
 import re
 
+import sqlparse
+from sqlalchemy.dialects import sqlite
+
 
 def autorepr(cls):
     """Class decorator that automatically adds __repr__ and __str__ methods.
@@ -37,6 +40,25 @@ def autorepr(cls):
     cls.__repr__ = __repr__
     cls.__str__ = __str__
     return cls
+
+
+def pprint_sql(cmd) -> str:
+    # dialect = cmd.get_bind().dialect
+    try:
+        return sqlparse.format(
+                str(cmd.compile(dialect=sqlite.dialect(),
+                                compile_kwargs={"literal_binds": True})),
+                reindent=True)
+    except:
+        try:
+            return "Unable to represent bindings:\n{}".format(
+                sqlparse.format(
+                    str(cmd.compile(dialect=sqlite.dialect())),
+                    reindent=True)
+            )
+        except Exception as e:
+            return "utilities.db: Could not parse sql query; error: {}" \
+                   .format(str(e))
 
 
 def timestamp() -> str:

@@ -17,8 +17,11 @@ from sqlalchemy.sql import (
     Update
 )
 
-from star_schema.config import cfg, ConfigError
-from logger import log_error, rotating_log
+from star_schema.config import cfg
+from logger import rotating_log
+from star_schema.utilities import pprint_sql
+
+logger = rotating_log('db')
 
 
 def get_engine():
@@ -28,13 +31,17 @@ def get_engine():
             from star_schema import md
             md.create_all(engine)
         else:
-            raise ConfigError('The database at path {} could not be found.'
-                              .format(cfg.app.db_path))
+            logger.error(
+                'get_engine: The database at path {} could not be found.'
+                .format(cfg.app.db_path)
+            )
     return engine
 
 
 class Transaction:
     def __init__(self) -> None:
+        self.logger = rotating_log('db.Transaction')
+
         self.connection = get_engine().connect() #eng.connect()
         self.transaction = self.connection.begin()
         self.rows_added = 0
@@ -42,12 +49,7 @@ class Transaction:
         self.rows_updated = 0
 
     def execute(self, cmd: Union[Delete, Insert, Update]):
-        try:
-            from sqlalchemy.dialects import sqlite
-            print(cmd.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
-        except Exception as e:
-            print("Unable to compose sql statement: cmd {}; err {}"
-                  .format(str(cmd), str(e)))
+        self.logger.debug('execute:\n{}'.format(pprint_sql(cmd)))
         try:
             result = self.connection.execute(cmd)
             if type(cmd) == Delete:
@@ -75,12 +77,10 @@ class Transaction:
         }
 
 
-@log_error
 def fetch(qry: Select) -> List[str]:
-    con = get_engine().connect() #eng.connect()
+    con = get_engine().connect()
     try:
-        from sqlalchemy.dialects import sqlite
-        print(qry.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
+        logger.debug('fetch:\n{}'.format(pprint_sql(qry)))
         return con.execute(qry).fetchall()
     except:
         raise
