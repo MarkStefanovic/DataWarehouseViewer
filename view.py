@@ -640,8 +640,11 @@ class QueryDesigner(QtGui.QWidget):
         self.layout.addWidget(self.btn_export, self._current_row, 1, 1, 1)
 
     def reset(self):
-        for val in self.query_controls.values():
-            val.setText('')
+        for txt in self.query_controls.values():
+            if isinstance(txt, QComboBox):
+                txt.setCurrentIndex(0)  # index 0 is an empty string
+            else:
+                txt.setText('')
         self.reset_signal.emit()
 
 
