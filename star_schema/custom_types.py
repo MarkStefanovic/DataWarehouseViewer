@@ -8,13 +8,14 @@ from enum import unique, Enum
 from typing import (
     NewType,
     Union,
-    Optional)
+    Optional, Callable, Tuple, Any)
 
 from star_schema.utilities import autorepr
 
 ColumnIndex = NewType('ColumnIndex', int)
 DateString = NewType('DateString', str)
 DimensionName = NewType('DimensionName', str)
+ErrorMessage = NewType('ErrorMessage', str)
 FactName = NewType('FactName', str)
 FieldIndex = NewType('FieldType', int)
 TableName = NewType('TableName', str)
@@ -24,6 +25,8 @@ ForeignKeyValue = NewType('ForeignKeyValue', int)
 PrimaryKeyIndex = NewType('PrimaryKeyIndex', int)
 
 SqlDataType = Union[bool, str, int, float, datetime.date, datetime.datetime]
+# Validator = Callable[[...], Tuple[bool, Optional[ErrorMessage]]]
+Validator = Callable[[Any, ErrorMessage], Tuple[bool, Optional[ErrorMessage]]]
 
 
 class DateStr(str):
@@ -45,35 +48,44 @@ class DateStr(str):
 
 @unique
 class FieldType(Enum):
-    Date = 1
-    Float = 2
-    Int = 3
-    Str = 4
-    Bool = 5
+    Date = "date"
+    Float = "float"
+    Int = "integer"
+    Str = "string"
+    Bool = "boolean"
 
     def __init__(self, data_type) -> None:
         self.data_type = data_type
+
+    def __str__(self):
+        return str(self.value)
 
 
 @unique
 class FieldFormat(Enum):
     """This class is used by the rows manager when processing the list to
     represent the data for display."""
-    Accounting = 1
-    Bool = 2
-    Currency = 3
-    Date = 4
-    DateTime = 5
-    Float = 6
-    Int = 7
-    Str = 8
+    Accounting = "accounting"
+    Bool = "boolean"
+    Currency = "currency"
+    Date = "date"
+    DateTime = "datetime"
+    Float = "float"
+    Int = "integer"
+    Str = "string"
 
     def __init__(self, field_format) -> None:
         self.field_format = field_format
 
+    def __str__(self):
+        return str(self.value)
+
 
 @unique
 class Operator(Enum):
+    bool_is = "Is"
+    bool_is_not = "Is Not"  # only useful if the bool field allows Null
+
     number_equals = "Equals"
     number_does_not_equal = "Doesn't Equal"
     number_greater_than = "Greater Than"
@@ -100,9 +112,11 @@ class Operator(Enum):
 
 
 class SortOrder(Enum):
-    Ascending = 1
-    Descending = 2
+    Ascending = "Ascending"
+    Descending = "Descending"
 
+    def __str__(self):
+        return str(self.value)
 
 @autorepr
 class OrderBy:
@@ -116,15 +130,21 @@ class OrderBy:
 
 
 class VerticalAlignment(Enum):
-    Bottom = 1
-    Center = 2
-    Top = 3
+    Bottom = "bottom"
+    Center = "vertical center"
+    Top = "top"
+
+    def __str__(self):
+        return str(self.value)
 
 
 class HorizontalAlignment(Enum):
-    Center = 1
-    Left = 2
-    Right = 3
+    Center = "horizontal center"
+    Left = "left"
+    Right = "right"
+
+    def __str__(self):
+        return str(self.value)
 
 
 @autorepr
