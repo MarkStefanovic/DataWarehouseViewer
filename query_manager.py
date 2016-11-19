@@ -126,8 +126,10 @@ class QueryManager(QtCore.QObject):
                             value=col
                         )
                     except Exception as e:
-                        print('Error converting value {}, row {}, col {}, err {}'
-                              .format(col, r, c, str(e)))
+                        self.logger.debug(
+                            'process_results: Error converting value {}, '
+                            'row {}, col {}, err {}'.format(col, r, c, str(e))
+                        )
                         processed[r][c] = col
             self.query_results_signal.emit(processed)
         except Exception as e:
