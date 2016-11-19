@@ -17,48 +17,107 @@ from hypothesis.strategies import (
     booleans,
     floats,
     integers,
-    text
-)
+    text,
+    one_of, none)
 
 from star_schema.constellation import (
     convert_value,
     format_value,
     CalculatedField)
+from star_schema.custom_types import SqlDataType
+
+random_input_type = one_of(
+    booleans(),
+    datetimes(),
+    integers(),
+    floats(allow_infinity=False, allow_nan=False),
+    none(),
+    text()
+)
+
+input_types = [bool, int, float, str, datetime.date, datetime.datetime]
 
 
 class TestConvertValue:
-    @given(x=integers())
-    def test_convert_value_int_field_returns_int(self, x, integer_field):
-        """Converting a value to an integer returns an integer or None"""
-        assert type(convert_value(field_type=integer_field.dtype, value=x)) == int
 
-    @given(x=text())
+    def test_convert_value_int_field_returns_int(self, integer_field):
+        """Converting a value to an integer returns an integer or None"""
+        rval = lambda v: convert_value(field_type=integer_field.dtype, value=v)
+        rtype = lambda v: type(rval(v))
+        assert rval(None) is None
+        assert rtype(11) == int
+        assert rtype(0) == int
+        assert rtype(-11) == int
+        assert rtype(42.42) == int
+        assert rtype(0.0) == int
+        assert rtype(-42.42) == int
+        assert rval('') == 0
+        with pytest.raises(ValueError):
+            rtype('abc')
+        with pytest.raises(ValueError):
+            rtype(datetime.datetime.now())
+
+    @given(x=random_input_type)
     def test_convert_value_str_field_returns_str(self, x, string_field):
         """Converting a value to an str returns an str"""
-        assert type(convert_value(field_type=string_field.dtype, value=x)) == str
+        rval = convert_value(field_type=string_field.dtype, value=x)
+        rtype = type(rval)
 
-    @given(x=booleans())
-    def test_convert_value_bool_field_returns_bool(self, x, bool_field):
-        """Converting a value to a bool returns a bool or None"""
-        assert type(convert_value(field_type=bool_field.dtype, value=x)) == bool
-
-    @given(x=floats())
-    def test_convert_value_float_field_returns_float(self, x, float_field):
-        """Converting a value to a float returns an float or None"""
-        conv = convert_value(field_type=float_field.dtype, value=x)
         if x is None:
-            assert conv is None
-        elif isinf(x) or isnan(x):
-            assert conv is None
+            assert rval is None
+        elif type(x) in input_types:
+            assert rtype == str or rval is None
         else:
-            assert type(conv) == float
+            assert rval is None
 
-    @given(x=datetimes())
-    def test_convert_value_date_field_returns_date_or_none(self, x, date_field):
+    def test_convert_value_bool_field_returns_bool(self, bool_field):
+        """Converting a value to a bool returns a bool or None"""
+        rval = lambda v: convert_value(field_type=bool_field.dtype, value=v)
+
+        assert rval(None) is None
+        assert rval(1) == True
+        assert rval(0) == False
+        assert rval(1.0) == True
+        assert rval(0.0) == False
+        assert rval('true') == True
+        assert rval('false') == False
+        with pytest.raises(ValueError):
+            rval(-1)
+        with pytest.raises(ValueError):
+            rval(-1.0)
+        with pytest.raises(ValueError):
+            rval(datetime.datetime.now())
+        with pytest.raises(ValueError):
+            rval("abc")
+
+
+    def test_convert_value_float_field_returns_float(self, float_field):
+        """Converting a value to a float returns an float or None"""
+        rval = lambda v: convert_value(field_type=float_field.dtype, value=v)
+        rtype = lambda v: type(rval(v))
+
+        assert rval(None) is None
+        assert rtype('1.1') == float
+        assert rtype(1) == float
+        assert rtype("-0.1") == float
+        assert rtype(1.4) == float
+        assert rtype("1") == float
+        with pytest.raises(ValueError):
+            rval("hello world")
+        with pytest.raises(ValueError):
+            rval(datetime.datetime.now())
+
+    def test_convert_value_date_field_returns_date_or_none(self, date_field):
         """Converting a value to an date returns an date or None"""
-        assert type(convert_value(field_type=date_field.dtype, value=x)) == datetime.datetime
-        dt = x.date()
-        assert type(convert_value(field_type=date_field.dtype, value=dt)) == datetime.date
+        rval = lambda v: convert_value(field_type=date_field.dtype, value=v)
+        rtype = lambda v: type(rval(v))
+
+        assert rval(None) is None
+        assert rtype(datetime.datetime.now()) == datetime.datetime
+        assert rval(0) is None
+        assert rval('') is None
+        with pytest.raises(ValueError):
+            rval('abc')
 
 
 class TestFormatValue:
@@ -92,7 +151,7 @@ class TestFormatValue:
         assert str(fmt_val) == x
 
 
-    @given(x=floats())
+    @given(x=floats(allow_infinity=False, allow_nan=False))
     def test_format_value_floats(self, x, float_field):
         """Floats are properly formatted and that the value is unchanged"""
         fmt_val = format_value(field_type=float_field.dtype,
