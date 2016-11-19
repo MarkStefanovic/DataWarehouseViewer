@@ -100,10 +100,16 @@ class QueryManager(QtCore.QObject):
         }
 
     def pull(self, show_rows_returned: bool=True) -> None:
-        self.runner.run_sql(
-            query=self.sql_display,
-            show_rows_returned=show_rows_returned
-        )
+        if self.sql_display.is_selectable:
+            self.runner.run_sql(
+                query=self.sql_display,
+                show_rows_returned=show_rows_returned
+            )
+        else:
+            err_msg = "Unable to compose the query for base {}" \
+                      .format(self.base.display_name)
+            self.logger.error('pull: {}'.format(err_msg))
+            raise AttributeError(err_msg)
 
     @QtCore.pyqtSlot(list)
     def process_results(self, results: list) -> None:
@@ -135,8 +141,15 @@ class QueryManager(QtCore.QObject):
 
     @log_error
     def save_changes(self, changes: Dict[str, List[tuple]]) -> Dict[str, int]:
-        """Persist a change to the database."""
+        """Persist a change to the database.
 
+        :param changes: A dict keyed by the change type ('added', 'updated',
+                 'deleted') and valued by the list of tuples representing rows
+                 with changes of that type.
+        :return: Returns a dict indexed by the change type ('added', 'updated',
+                 'deleted') and valued by the count of said changes that were
+                 successfully saved to the database.
+        """
         trans = Transaction()
         new_rows_id_map = []  # type: List[Tuple[int, int]]
         try:
