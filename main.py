@@ -1,19 +1,26 @@
 """This app displays data from a database in a way that is easy to filter and export.
 """
-
+import logging
+from logging.config import dictConfig
 import os
 import sys
 
 from PyQt4 import QtGui
 
+from logger import default_config
+from star_schema.constellation import get_constellation
 from view import MainView
-from logger import rotating_log
+
+
+logging_config = default_config()
 
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
-    main_view = MainView()
-    main_logger = rotating_log('main')
+    constellation = get_constellation()
+    main_view = MainView(constellation=constellation)
+    dictConfig(logging_config)
+    logger = logging.getLogger('app')
 
     try:
         # app.setStyle('cleanlooks')
@@ -37,5 +44,5 @@ if __name__ == '__main__':
     except SystemExit:
         os._exit(0)
     except Exception as e:
-        main_logger.error("Error {}".format(e))
+        logger.error("Error {}".format(e))
         sys.exit(app.exec_())

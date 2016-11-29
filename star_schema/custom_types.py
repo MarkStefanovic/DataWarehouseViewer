@@ -2,7 +2,7 @@
 improve the readability of the code."""
 
 import datetime
-import re
+from collections import namedtuple
 from enum import unique, Enum
 
 from typing import (
@@ -14,40 +14,43 @@ from star_schema.utilities import autorepr
 
 ColumnIndex = NewType('ColumnIndex', int)
 DateString = NewType('DateString', str)
-DimensionName = NewType('DimensionName', str)
+DimensionTableName = NewType('DimensionTableName', str)
+DimensionDisplayName = NewType('DimensionDisplayName', str)
 ErrorMessage = NewType('ErrorMessage', str)
-FactName = NewType('FactName', str)
+FactTableName = NewType('FactTableName', str)
 FieldIndex = NewType('FieldType', int)
+LookupTableName = NewType('LookupTableName', str)
 TableName = NewType('TableName', str)
+TableDisplayName = NewType('TableDisplayName', str)
 ViewName = NewType('ViewName', str)
 FieldName = NewType('FieldName', str)
+FieldDisplayName = NewType('FieldDisplayName', str)
 ForeignKeyValue = NewType('ForeignKeyValue', int)
 PrimaryKeyIndex = NewType('PrimaryKeyIndex', int)
+PrimaryKeyValue = NewType('RowID', int)
 
 SqlDataType = Union[bool, str, int, float, datetime.date, datetime.datetime]
 # Validator = Callable[[...], Tuple[bool, Optional[ErrorMessage]]]
 Validator = Callable[[Any, ErrorMessage], Tuple[bool, Optional[ErrorMessage]]]
 
-
-class DateStr(str):
-    def __new__(cls, content) -> DateString:
-        if not content:
-            return super().__new__(cls, '')
-        if isinstance(content, str):
-            if re.match(r"^\d{4}-\d{2}-\d{2}.*$", content):
-                return super().__new__(cls, content[:10])
-            raise ValueError("{v} is not a valid date".format(v=content))
-        return str(content)[:10]
-
-    @staticmethod
-    def convert_to_datetime(val: DateString) -> datetime.date:
-        if re.match(r"^\d{4}-\d{2}-\d{2}.*$", val):
-            return datetime.datetime.strptime(val[:10], "%Y-%m-%d").date()
-        raise ValueError("{v} is not a valid date".format(v=val))
+DisplayField = namedtuple(
+    'DisplayField',
+    'display_index '
+    'original_index '
+    'name '
+    'display_name '
+    'field_type '
+    'dtype '
+    'field_format '
+    'editable '
+    'visible '
+    'dimension'
+)
 
 
 @unique
 class FieldType(Enum):
+    """Predefined field data types"""
     Date = "date"
     Float = "float"
     Int = "integer"
@@ -83,6 +86,7 @@ class FieldFormat(Enum):
 
 @unique
 class Operator(Enum):
+    """Predefined operator types"""
     bool_is = "Is"
     bool_is_not = "Is Not"  # only useful if the bool field allows Null
 
@@ -112,24 +116,27 @@ class Operator(Enum):
 
 
 class SortOrder(Enum):
+    """Predefined sort order options"""
     Ascending = "Ascending"
     Descending = "Descending"
 
     def __str__(self):
         return str(self.value)
 
+
 @autorepr
 class OrderBy:
-    """This class stores the configuration for a sort order field"""
+    """Configuration for a sort order field"""
     def __init__(self, *,
-            field_name: FieldName,
-            sort_order: SortOrder=SortOrder.Ascending
+        field_name: FieldName,
+        sort_order: SortOrder=SortOrder.Ascending
     ) -> None:
         self.sort_order = sort_order
         self.field_name = field_name
 
 
 class VerticalAlignment(Enum):
+    """Predefined vertical alignment options for display"""
     Bottom = "bottom"
     Center = "vertical center"
     Top = "top"
@@ -139,6 +146,7 @@ class VerticalAlignment(Enum):
 
 
 class HorizontalAlignment(Enum):
+    """Predefined horizontal alignment options for display"""
     Center = "horizontal center"
     Left = "left"
     Right = "right"
@@ -146,13 +154,3 @@ class HorizontalAlignment(Enum):
     def __str__(self):
         return str(self.value)
 
-
-@autorepr
-class FilterConfig:
-    """This class serves as a temporary holding tank for would-be Filter configs"""
-    def __init__(self, *,
-            operator: Operator,
-            default_value: Optional[SqlDataType]=''
-    ) -> None:
-        self.default_value = default_value
-        self.operator = operator

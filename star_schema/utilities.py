@@ -1,5 +1,4 @@
 """The functions used in the module are used by multiple modules in the project"""
-
 from reprlib import recursive_repr
 import time
 import re
@@ -25,16 +24,26 @@ def autorepr(cls):
             a = hello
             b = ...
     """
+    excludes = ['config', 'logger']
+
     @recursive_repr()
     def __repr__(self):
         attrs = ", ".join(
-            "{}={}".format(k, v) for k, v in self.__dict__.items())
+            "{}={}".format(k, v)
+            for k, v in self.__dict__.items()
+            if k not in excludes
+                and not k.startswith('_')
+        )
         return "{}({})".format(self.__class__.__name__, attrs)
 
     @recursive_repr()
     def __str__(self):
         attrs = "\n".join(
-            "    {} = {}".format(k, v) for k, v in self.__dict__.items())
+            "    {} = {}".format(k, v)
+            for k, v in self.__dict__.items()
+            if k not in excludes
+               and not k.startswith('_')
+        )
         return "{}\n{}".format(self.__class__.__name__, attrs)
 
     cls.__repr__ = __repr__
@@ -46,8 +55,8 @@ def pprint_sql(cmd) -> str:
     # dialect = cmd.get_bind().dialect
     try:
         return sqlparse.format(
-                str(cmd.compile(dialect=sqlite.dialect(),
-                                compile_kwargs={"literal_binds": True})),
+                '\n' + str(cmd.compile(dialect=sqlite.dialect(),
+                                       compile_kwargs={"literal_binds": True})),
                 reindent=True)
     except:
         try:

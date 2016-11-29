@@ -1,10 +1,13 @@
+import logging
+
 from PyQt4 import QtCore
 import time
 
 from sqlalchemy.sql import Select
 
 from star_schema.db import fetch
-from logger import log_error
+
+module_logger = logging.getLogger('app')
 
 
 class QueryRunnerSignals(QtCore.QObject):
@@ -16,37 +19,33 @@ class QueryRunnerSignals(QtCore.QObject):
 
 
 class QueryRunnerThread(QtCore.QThread):
-
-    def __init__(self,
+    def __init__(self, *,
         query: Select,
+        con_str: str,
         show_rows_returned: bool=True
     ) -> None:
-
+        self.logger = module_logger.getChild('QueryRunnerThread')
         super(QueryRunnerThread, self).__init__()
         self.query = query  # type: Select
         self.signals = QueryRunnerSignals()
         self.start_time = time.time()
         self.show_rows_returned = show_rows_returned
+        self.con_str = con_str
 
-    @log_error
     def pull(self) -> None:
         try:
-            results = fetch(self.query)
+            results = fetch(qry=self.query, con_str=self.con_str)
             if self.show_rows_returned:
-                self.signals.rows_returned_msg.emit(
-                    '{} rows returned in {} seconds'.format(
-                        len(results),
-                        int(time.time() - self.start_time)
-                    )
-                )
+                err_msg = '{} rows returned in {} seconds' \
+                    .format(len(results), int(time.time() - self.start_time))
+                self.logger.debug('pull: {}'.format(err_msg))
+                self.signals.rows_returned_msg.emit(err_msg)
             self.signals.results.emit(results)
         except Exception as e:
-            self.signals.error.emit(
-                'Query execution error: {err}; {qry}'.format(
-                    err=e
-                    , qry=self.query
-                )
-            )
+            err_msg = 'Query execution error: {err}; {qry}' \
+                .format(err=e, qry=self.query)
+            self.logger.debug('pull: {}'.format(err_msg))
+            self.signals.error.emit(err_msg)
 
     def run(self) -> None:
         self.pull()
@@ -63,10 +62,17 @@ class QueryRunner(QtCore.QObject):
         self.signals = QueryRunnerSignals()
         self.thread = None
 
-    @log_error
-    def run_sql(self, query: str, show_rows_returned: bool=True) -> None:
+    def run_sql(self, *,
+            query: Select,
+            con_str: str,
+            show_rows_returned: bool=True
+        ) -> None:
         self.signals.exit.emit()  # stop current thread
-        self.thread = QueryRunnerThread(query, show_rows_returned)
+        self.thread = QueryRunnerThread(
+            query=query,
+            con_str=con_str,
+            show_rows_returned=show_rows_returned
+        )
         self.signals.exit.connect(self.thread.stop)
         self.thread.signals.error.connect(self.signals.error.emit)
         self.thread.signals.rows_returned_msg.connect(self.signals.rows_returned_msg.emit)

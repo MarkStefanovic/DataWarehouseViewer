@@ -5,6 +5,11 @@ from star_schema.custom_types import FieldType, FieldFormat
 
 
 @fixture(scope='module')
+def dummy_db():
+
+
+
+@fixture(scope='module')
 def integer_field():
     return Field(name='test_int_field',
                  dtype=FieldType.Int,

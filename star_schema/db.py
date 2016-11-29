@@ -2,6 +2,8 @@
 
 All of the code in other modules interfaces with the database through the
 classes and functions in this module."""
+import logging
+
 from typing import (
     Dict,
     List,
@@ -9,6 +11,7 @@ from typing import (
 )
 
 from sqlalchemy import create_engine
+from sqlalchemy import engine as sqla_engine
 from sqlalchemy_utils import database_exists
 from sqlalchemy.sql import (
     Delete,
@@ -17,32 +20,65 @@ from sqlalchemy.sql import (
     Update
 )
 
-from star_schema.config import cfg
-from logger import rotating_log
 from star_schema.utilities import pprint_sql
 
-logger = rotating_log('db')
+module_logger = logging.getLogger('app.' + __name__)
 
 
-def get_engine():
-    engine = create_engine(cfg.app.db_path, echo=False)
-    if not database_exists(engine.url):
-        if 'sqlite' in cfg.app.db_path:
-            from star_schema import md
-            md.create_all(engine)
+def create_sqlite_db(eng: sqla_engine) -> None:
+    logger = module_logger.getChild('create_sqlite_db')
+    try:
+        from star_schema import md
+        md.create_all(eng)
+    except Exception as e:
+        logger.debug(
+            'Unable to create database; error {}'
+            .format(str(e))
+        )
+
+
+def is_sqlite(con_str: str) -> bool:
+    return 'sqlite' in con_str
+
+
+def get_engine(con_str: str) -> sqla_engine:
+    logger = module_logger.getChild('get_engine')
+    if not con_str:
+        err_msg = 'No connection string was provided'
+        logger.error(err_msg)
+        raise AttributeError(err_msg)
+    try:
+        engine = create_engine(con_str, echo=False)
+        if not database_exists(engine.url):
+            if is_sqlite(con_str):
+                create_sqlite_db(eng=engine)
+            else:
+                logger.debug(
+                    'The database at path {} could not be found.'
+                    .format(con_str)
+                )
+        return engine
+    except Exception as e:
+        if is_sqlite(con_str):
+            try:
+                eng = create_engine(con_str, echo=False)
+                create_sqlite_db(eng)
+                return eng
+            except:
+                raise
         else:
-            logger.error(
-                'get_engine: The database at path {} could not be found.'
-                .format(cfg.app.db_path)
+            logger.debug(
+                'The sqlachemy engine could not be instantiated; '
+                'error {}'.format(str(e))
             )
-    return engine
+            raise
 
 
 class Transaction:
-    def __init__(self) -> None:
-        self.logger = rotating_log('db.Transaction')
+    def __init__(self, con_str: str) -> None:
+        self.logger = module_logger.getChild('Transaction')
 
-        self.connection = get_engine().connect() #eng.connect()
+        self.connection = get_engine(con_str=con_str).connect()
         self.transaction = self.connection.begin()
         self.rows_added = 0
         self.rows_deleted = 0
@@ -77,12 +113,18 @@ class Transaction:
         }
 
 
-def fetch(qry: Select) -> List[str]:
-    con = get_engine().connect()
+def fetch(qry: Select, con_str: str) -> List[str]:
+    logger = module_logger.getChild('fetch')
     try:
-        logger.debug('fetch:\n{}'.format(pprint_sql(qry)))
+        engine = get_engine(con_str)
+        con = engine.connect()
+        logger.debug(pprint_sql(qry))
         return con.execute(qry).fetchall()
-    except:
+    except Exception as e:
+        logger.error(
+            'fetch: Unable to run the query {}; con_str: {}; error {}'
+            .format(pprint_sql(qry), con_str, str(e))
+        )
         raise
     finally:
         con.close()

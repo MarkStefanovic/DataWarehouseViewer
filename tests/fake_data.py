@@ -1,12 +1,57 @@
 import os
 import random
 import sqlite3
+from contextlib import contextmanager
 
 from faker import Faker
 
 from utilities import rootdir
 
 fake = Faker()
+
+@contextmanager
+def tag(name):
+    print("<%s>" % name)
+    yield
+    print("</%s>" % name)
+
+
+@contextmanager
+def dummy_db():
+    con = sqlite3.connect(":memory:")
+    print('creating in-memory db')
+
+    print('creating dimCustomer table')
+    con.execute("""
+        CREATE TABLE dimCustomer (
+          ID INTEGER PRIMARY KEY,
+          FirstName VARCHAR,
+          LastName VARCHAR
+        )
+    """)
+    con.execute("INSERT INTO dimCustomer (FirstName, LastName) VALUES ('Mark', 'Stefanovic')")
+    con.execute("INSERT INTO dimCustomer (FirstName, LastName) VALUES ('Bob', 'Smith')")
+    con.execute("INSERT INTO dimCustomer (FirstName, LastName) VALUES ('Steve', 'Jenkins')")
+    for row in con.execute("SELECT * FROM dimCustomer"):
+        print('Customer:', row)
+
+    print('creating factSales table')
+    con.execute("""
+        CREATE TABLE factSales (
+          ID INTEGER PRIMARY KEY,
+          CustomerID INTEGER,
+          SalesAmount FLOAT
+        )
+    """)
+    con.execute("INSERT INTO factSales (CustomerID, SalesAmount) VALUES (1, 1.12)")
+    con.execute("INSERT INTO factSales (CustomerID, SalesAmount) VALUES (2, 42.14)")
+    con.execute("INSERT INTO factSales (CustomerID, SalesAmount) VALUES (3, 93.17)")
+    for row in con.execute("SELECT * FROM factSales"):
+        print('Sales Transaction:', row)
+
+    yield con
+    print('closing in-memory db')
+    con.close()
 
 
 class SQLiteConnection:
@@ -164,5 +209,7 @@ def reset_db():
 
 
 if __name__ == '__main__':
-    db_path = os.path.join(rootdir(), 'test.db')
-    reset_db()
+    # db_path = os.path.join(rootdir(), 'test.db')
+    # reset_db()
+    with dummy_db():
+        print('starting')

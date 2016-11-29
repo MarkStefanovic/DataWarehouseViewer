@@ -1,0 +1,577 @@
+{
+  "app": {
+      "display_name": "Submission Tracker",
+      "color_scheme": "darkcity.css",
+      "db_path": "sqlite:///submission_tracker.db"
+  },
+  "dimensions": [
+    {
+      "table_name": "dimGenre",
+      "display_name": "Genre",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": false,
+      "fields": [
+        {
+          "name": "ID",
+          "dtype": "Int",
+          "display_name": "Genre ID",
+          "primary_key": true
+        },
+        {
+          "name": "Genre",
+          "dtype": "Str",
+          "display_name": "Genre",
+          "filters": [],
+          "primary_key": false
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Genre"],
+        "display_name": "Genre",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Genre",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimPublication",
+      "display_name": "Publications",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": true,
+      "fields": [
+        {
+          "name": "ID",
+          "dtype": "Int",
+          "display_name": "Publication ID",
+          "primary_key": true
+        },
+        {
+          "name": "PublicationName",
+          "dtype": "Str",
+          "display_name": "Name",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false
+        },
+        {
+          "name": "SimultaneousSubmissions",
+          "dtype": "Bool",
+          "display_name": "Simultaneous Submissions",
+          "filters": [
+            {
+              "operator": "bool_is",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false
+        },
+        {
+          "name": "PreferredScore",
+          "dtype": "Int",
+          "display_name": "Pref.Score: 1-5",
+          "default_value": 1,
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": 1
+            }
+          ],
+          "primary_key": false
+        },
+        {
+          "name": "MinimumWordCount",
+          "dtype": "Int",
+          "display_name": "Min Words",
+          "default_value": 50,
+          "field_format": "Int",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            },
+            {
+              "operator": "number_less_than_or_equal_to",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false
+        },
+        {
+          "name": "MaximumWordCount",
+          "dtype": "Int",
+          "display_name": "Max Words",
+          "default_value": 1000,
+          "field_format": "Int",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            },
+            {
+              "operator": "number_less_than_or_equal_to",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false
+        },
+        {
+          "name": "UnderConsideration",
+          "dtype": "Bool",
+          "display_name": "Under Consideration",
+          "filters": [
+            {
+              "operator": "bool_is",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Notes",
+          "dtype": "Str",
+          "display_name": "Publication Notes",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "DateAdded",
+          "dtype": "Date",
+          "editable": false,
+          "display_name": "Date Added",
+          "default_value": "Today",
+          "field_format": "Date",
+          "filters": [],
+          "visible": true
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["PublicationName"],
+        "display_name": "Publication",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "PublicationName",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimStory",
+      "display_name": "Stories",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": true,
+      "fields": [
+        {
+          "name": "ID",
+          "dtype": "Int",
+          "display_name": "Story ID",
+          "primary_key": true,
+          "visible": false
+        },
+        {
+          "name": "Title",
+          "dtype": "Str",
+          "display_name": "Title",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false,
+          "visible": true
+        },
+        {
+          "name": "DateFinished",
+          "dtype": "Date",
+          "display_name": "Date Finished",
+          "default_value": "Today",
+          "field_format": "Date",
+          "filters": [
+            {
+              "operator": "date_on_or_after",
+              "default_value": ""
+            },
+            {
+              "operator": "date_on_or_before",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false,
+          "visible": true
+        },
+        {
+          "name": "WordLength",
+          "dtype": "Int",
+          "display_name": "Word Length",
+          "default_value": 0,
+          "field_format": "Int",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            },
+            {
+              "operator": "number_less_than_or_equal_to",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false,
+          "visible": true
+        },
+        {
+          "name": "Notes",
+          "dtype": "Str",
+          "display_name": "Story Notes",
+          "default_value": "",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false,
+          "visible": true
+        },
+        {
+          "name": "DateAdded",
+          "dtype": "Date",
+          "display_name": "Date Added",
+          "default_value": "Today",
+          "field_format": "Date",
+          "filters": [],
+          "primary_key": false,
+          "visible": true
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Title"],
+        "display_name": "Title",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Title",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimStatus",
+      "display_name": "Statuses",
+      "editable": true,
+      "show_on_load": true,
+      "visible": true,
+      "fields": [
+        {
+          "name": "ID",
+          "dtype": "Int",
+          "display_name": "Status ID",
+          "primary_key": true
+        },
+        {
+          "name": "Status",
+          "dtype": "Str",
+          "display_name": "Status",
+          "field_format": "Str",
+          "filters": []
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Status"],
+        "display_name": "Status",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Status",
+          "sort_order": "Ascending"
+        }
+      ]
+    }
+  ],
+  "lookup_tables": [
+    {
+      "table_name": "lkpPublicationGenre",
+      "display_name": "Publication Genre Lookup",
+      "editable": true,
+      "show_on_load": true,
+      "id_field": {
+        "name": "ID",
+        "dtype": "Int",
+        "display_name": "ID",
+        "primary_key": true
+      },
+      "proximal_fk": {
+        "name": "PublicationID",
+        "display_name": "Publication",
+        "dtype": "Int",
+        "dimension": "dimPublication",
+        "foreign_key_field": "ID"
+      },
+      "distal_fk": {
+        "name": "GenreID",
+        "display_name": "Genre(s)",
+        "dtype": "Int",
+        "dimension": "dimGenre",
+        "foreign_key_field": "ID"
+      },
+      "extra_fields": [],
+      "summary_field": {
+        "display_fields": ["GenreID"],
+        "display_name": "Genre(s)",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "GenreID",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "lkpStoryGenre",
+      "display_name": "Story Genre Lookup",
+      "editable": true,
+      "show_on_load": true,
+      "id_field": {
+        "name": "ID",
+        "dtype": "Int",
+        "display_name": "ID",
+        "primary_key": true
+      },
+      "proximal_fk": {
+        "name": "StoryID",
+        "display_name": "Story",
+        "dtype": "Int",
+        "dimension": "dimStory",
+        "foreign_key_field": "ID"
+      },
+      "distal_fk": {
+        "name": "GenreID",
+        "display_name": "Genre(s)",
+        "dtype": "Int",
+        "dimension": "dimGenre",
+        "foreign_key_field": "ID"
+      },
+      "extra_fields": [],
+      "summary_field": {
+        "display_fields": ["GenreID"],
+        "display_name": "Genre(s)",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "GenreID",
+          "sort_order": "Ascending"
+        }
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "table_name": "factSubmission",
+      "display_name": "Submission",
+      "editable": true,
+      "display_rows": 10000,
+      "show_on_load": true,
+      "fields": [
+        {
+          "name": "ID",
+          "dtype": "Int",
+          "display_name": "Submission ID",
+          "primary_key": true
+        },
+        {
+          "name": "Revenue",
+          "dtype": "Float",
+          "display_name": "Revenue",
+          "field_format": "Accounting",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Expenses",
+          "dtype": "Float",
+          "display_name": "Expenses",
+          "field_format": "Accounting",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Response",
+          "dtype": "Str",
+          "display_name": "Response(s)",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Notes",
+          "dtype": "Str",
+          "display_name": "Submission Notes",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "DateAdded",
+          "dtype": "Str",
+          "editable": false,
+          "display_name": "Date Added",
+          "default_value": "Today",
+          "field_format": "Date",
+          "filters": [],
+          "visible": true
+        },
+        {
+          "name": "DateSubmitted",
+          "dtype": "Str",
+          "editable": false,
+          "display_name": "Date Submitted",
+          "default_value": "Today",
+          "field_format": "Date",
+          "filters": [],
+          "visible": true
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "StoryID",
+          "display_name": "Story",
+          "dimension": "dimStory",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "PublicationID",
+          "display_name": "Publication",
+          "dimension": "dimPublication",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "StatusID",
+          "display_name": "Status",
+          "dimension": "dimStatus",
+          "foreign_key_field": "ID"
+        }
+      ],
+      "calculated_fields": [
+        {
+          "formula": "[Revenue] - [Expenses]",
+          "display_name": "Income",
+          "show_on_fact_table": true,
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            }
+          ]
+        }
+      ],
+      "order_by": [
+        {
+          "field_name": "Date Submitted",
+          "sort_order": "Descending"
+        }
+      ],
+      "refresh_on_update": false
+    }
+  ],
+  "views": [
+    {
+      "view_display_name": "Publication Totals",
+      "fact_table_name": "factSubmission",
+      "group_by_field_names": ["Publication", "Status"],
+      "additive_fields": [
+        {
+          "base_field_display_name": "Date Submitted",
+          "aggregate_display_name": "Stories Submitted",
+          "aggregate_func": "count"
+        },
+        {
+          "base_field_display_name": "Income",
+          "aggregate_display_name": "Total Income",
+          "aggregate_func": "sum"
+        }
+      ],
+      "order_by": [
+        {
+          "field_name": "Publication",
+          "sort_order": "Ascending"
+        }
+      ],
+      "show_on_load": true
+    }
+  ]
+}

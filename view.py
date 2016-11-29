@@ -1,5 +1,5 @@
 """This module displays the data provided by the query manager"""
-
+import logging
 from collections import namedtuple, OrderedDict
 from functools import partial
 import os
@@ -15,17 +15,16 @@ from delegates import (
     CheckBoxDelegate,
     ForeignKeyDelegate
 )
-from logger import rotating_log
-from star_schema.config import cfg
 from model import AbstractModel
 from star_schema.constellation import (
     Filter,
-    Table,
     FieldType,
     View,
-    convert_value)
+    convert_value, DisplayPackage, get_constellation, Constellation)
 from star_schema.custom_types import Operator
 from utilities import rootdir, timestr, timestamp
+
+module_logger = logging.getLogger('app')
 
 
 class Control:
@@ -40,14 +39,19 @@ class DatasheetView(QtGui.QWidget):
     This class takes a model as an input and creates an editable datasheet therefrom.
     """
 
-    def __init__(self, table: Table, parent=None):
+    def __init__(self, config: DisplayPackage, parent=None):
+        self.logger = module_logger.getChild('DatasheetView')
         super(DatasheetView, self).__init__()
+
         self.setWindowFlags = (
             QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
-        self.logger = rotating_log('view.DatasheetView')
-        self.model = AbstractModel(table=table)
+        self.config = config
+        self.foreign_keys = config.foreign_keys
+
+
+        self.model = AbstractModel(config=config)
         self.table = QtGui.QTableView()
         self.table.setSortingEnabled(True)
         self.query_controls = {}
@@ -151,12 +155,11 @@ class DatasheetView(QtGui.QWidget):
 
     def add_foreign_key_comboboxes(self) -> None:
         self.foreign_key_delegates = {}
-        if self.model.query_manager.table.editable:
+        if self.model.query_manager.table.editable and self.model.foreign_keys:
             for key, val in self.model.foreign_keys.items():
-                dim = self.model.query_manager.table.foreign_keys[key].dimension
                 delegate = ForeignKeyDelegate(
                     model=self.model,
-                    dimension=dim
+                    foreign_keys=lambda: self.model.foreign_keys[key]
                 )
                 self.table.setItemDelegateForColumn(
                     key,
@@ -214,15 +217,18 @@ class DatasheetView(QtGui.QWidget):
         return selected_ids
 
     def hide_pk(self) -> None:
-        pk = self.model.query_manager.table.primary_key_index
-        # views don't include the primary key, so we don't try and hide the
-        # primary key on views
-        if pk >= 0:
-            self.table.hideColumn(pk)
+        try:
+            pk = self.model.query_manager.table.primary_key_index
+            # views don't include the primary key, so we don't try and hide the
+            # primary key on views
+            if pk >= 0:
+                self.table.hideColumn(pk)
 
-        for ix, fld in enumerate(self.model.query_manager.fields):
-            if not fld.visible:
-                self.table.hideColumn(ix)
+            for ix, fld in enumerate(self.config.field_order):
+                if not fld.visible:
+                    self.table.hideColumn(ix)
+        except Exception as e:
+            self.logger.debug('hide_pk: {}'.format(str(e)))
 
     def hide_query_designer(self):
         self.layout.removeItem(self.query_designer)
@@ -578,6 +584,8 @@ class QueryDesigner(QtGui.QWidget):
     def __init__(self, filters: List[Filter]) -> None:
         super(QueryDesigner, self).__init__()
 
+        self.logger = module_logger.getChild('QueryDesigner')
+
         self._current_row = 0  # type: int
         self.filters = filters  # type List[Filter]
 
@@ -652,28 +660,30 @@ class MainView(QtGui.QDialog):
 
     exit_signal = QtCore.pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, constellation: Constellation, parent=None):
         super(MainView, self).__init__(
             parent
             , QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
-        self.logger = rotating_log('view.MainView')
+        self.constellation = constellation
+        self.logger = logging.getLogger('MainView')
         self.config_popup = None
         self.datasheet_controls = []
         self.query_designer_visibility = True
         self._current_tab_index = 0
         self.tab_filters_loaded = set()
 
-        app_name = cfg.app.display_name
+        app_name = self.constellation.app.display_name
 
         self.setWindowTitle(app_name)
 
         self.tabs = QtGui.QTabWidget()
         Tab = namedtuple('Tab', 'table_ref ds_ref')
         self.tab_indices = {}  # type: Dict[int, tuple]
-        for i, tbl in enumerate(cfg.tables):
-            ds = DatasheetView(table=tbl)
+        for i, pkg in enumerate(self.constellation.display_packages):
+            ds = DatasheetView(config=pkg)
+            tbl = pkg.table
             self.datasheet_controls.append(ds)
             # self.exit_signal.connect(ds.exit_signal.emit)
             self.tab_indices[i] = Tab(table_ref=tbl, ds_ref=ds)

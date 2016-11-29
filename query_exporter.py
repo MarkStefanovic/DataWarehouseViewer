@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from subprocess import Popen
@@ -8,8 +9,9 @@ from PyQt4 import QtCore
 import xlwt
 
 from star_schema.custom_types import TableName
-from logger import log_error
 from utilities import delete_old_outputs
+
+module_logger = logging.getLogger('app.' + __name__)
 
 
 class SqlSignals(QtCore.QObject):
@@ -50,6 +52,7 @@ class ExportSqlThread(QtCore.QThread):
             table_name: TableName
     ) -> None:
         super(ExportSqlThread, self).__init__()
+        self.logger = module_logger.getChild('ExportSqlThread')
         self.rows = rows  # type: List[List[str]]
         self.header = header  # type: List[str]
         self.table_name = table_name  # type: TableName
@@ -57,7 +60,6 @@ class ExportSqlThread(QtCore.QThread):
         # stop thread in relatively safe spots
         self.stop_everything = False
 
-    @log_error
     def run(self) -> None:
 
         def autofit_cols(sheet) -> None:
@@ -72,7 +74,8 @@ class ExportSqlThread(QtCore.QThread):
                 for ix, width in col_specs.items():
                     sht.col(ix).width = min(width, 30) * 320 #367
             except Exception as e:
-                print('error formatting column widths: {}'.format(str(e)))
+                self.logger.debug('run: Error formatting column widths: {}'
+                                  .format(str(e)))
 
         try:
             folder = 'output'
@@ -90,10 +93,12 @@ class ExportSqlThread(QtCore.QThread):
                 sht.write(0, i, x, header_style)
 
             n = 0
-            if self.stop_everything: return
+            if self.stop_everything:
+                return
             try:
                 for row in self.rows:
-                    if self.stop_everything: return
+                    if self.stop_everything:
+                        return
                     n += 1
                     for i, val in enumerate(row):
                         if val:
@@ -114,6 +119,7 @@ class ExportSqlThread(QtCore.QThread):
         except Exception as e:
             err_msg = "Error exporting query_manager results: {err}; {qry}"\
                 .format(err=e, qry=self.rows)
+            self.logger.debug(err_msg)
             self.signals.error.emit(err_msg)
 
     def stop(self) -> None:

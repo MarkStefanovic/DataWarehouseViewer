@@ -1,7 +1,11 @@
-from PyQt4 import QtCore, QtGui
+import logging
 
-from logger import rotating_log
-from star_schema.config import cfg
+from PyQt4 import QtCore, QtGui
+from typing import Callable, Dict
+
+from model import AbstractModel
+
+module_logger = logging.getLogger('app.' + __name__)
 
 
 class CellEditorDelegate(QtGui.QItemDelegate):
@@ -19,16 +23,23 @@ class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
        being edited.
     """
 
-    def __init__(self, model, dimension: str) -> None:
+    def __init__(self, *,
+            model: AbstractModel,
+            foreign_keys: Callable[[], Dict[int, str]]
+        ) -> None:
+
+        self.logger = module_logger.getChild('ForeignKeyDelegate')
+
         super().__init__(model)
         self.model = model
-        self.dimension = dimension
+        self.foreign_keys = foreign_keys
 
     def createEditor(self, parent, option, index):
         """Create the ComboBox editor view."""
         self.editor = QtGui.QComboBox(parent)
         vals_displayed = set()
-        for key, val in cfg.foreign_keys(self.dimension).items():
+        fks = self.foreign_keys() or {}
+        for key, val in fks.items():
             if val not in vals_displayed:
                 self.editor.addItem(val, key)
                 vals_displayed.add(val)
@@ -41,12 +52,18 @@ class ForeignKeyDelegate(QtGui.QStyledItemDelegate):
         if ix >= 0:
             self.editor.setCurrentIndex(ix)
 
-
     def setModelData(self, editor, model, index):
         """Set the table's model's data when finished editing."""
-        cbo_index = editor.currentIndex()
-        item_index = self.editor.itemData(cbo_index)
-        model.setData(index, item_index, QtCore.Qt.DisplayRole)
+        try:
+            cbo_index = editor.currentIndex()
+            item_index = self.editor.itemData(cbo_index)
+            model.setData(index, item_index, QtCore.Qt.DisplayRole)
+        except Exception as e:
+            self.loger.debug(
+                'setModelData: Unable to set model data; error {}'
+                .format(str(e))
+            )
+
         # model.setData(index, self.foreign_keys[item_index], QtCore.Qt.UserRole)
 
 
@@ -57,11 +74,11 @@ def convert_to_bool(val):
         return True
     elif 'false' in str(val).lower():
         return False
-    elif str(val).isnumeric(): #isinstance(val, int):
+    elif str(val).isnumeric():
         if int(val) == 0:
             return False
         return True
-    return True # truthy
+    return True  # truthy
 
 
 class CheckBoxDelegate(QtGui.QStyledItemDelegate):
@@ -70,7 +87,7 @@ class CheckBoxDelegate(QtGui.QStyledItemDelegate):
     """
     def __init__(self, parent) -> None:
         super(CheckBoxDelegate, self).__init__()
-        self.logger = rotating_log('delegates.CheckBoxDelegate')
+        self.logger = module_logger.getChild('CheckBoxDelegate')
 
     def createEditor(self, parent, option, index) -> None:
         return

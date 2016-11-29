@@ -1,27 +1,28 @@
 """This module is responsible for procuring data for the model to prep and send to view.
 
 """
+import logging
+
 from sqlalchemy.sql import Select
 from typing import Dict, List, Tuple, Optional
 
 from PyQt4 import QtCore
 
-from star_schema.config import cfg
-from star_schema.custom_types import TableName
+# from star_schema.config import cfg
+from star_schema.custom_types import TableName, ColumnIndex, FieldName
 from star_schema.db import Transaction
 from query_exporter import QueryExporter
-from logger import log_error, rotating_log
 from query_runner import QueryRunner
 from star_schema.constellation import (
     Fact,
-    Field,
     Filter,
-    Table,
-    View
+    DisplayPackage
 )
 from star_schema.constellation import convert_value
 
 from star_schema.utilities import static_property
+
+module_logger = logging.getLogger('app.' + __name__)
 
 
 class QueryManager(QtCore.QObject):
@@ -30,18 +31,14 @@ class QueryManager(QtCore.QObject):
     error_signal = QtCore.pyqtSignal(str)
     query_results_signal = QtCore.pyqtSignal(list)
 
-    def __init__(self, table: Table) -> None:
+    def __init__(self, config: DisplayPackage) -> None:
         super(QueryManager, self).__init__()
-
+        self.logger = module_logger.getChild('QueryManager')
+        self.config = config
         self.exporter = QueryExporter()
         self.runner = QueryRunner()
-
-        self.table = table
-        self.star = cfg.star(self.table.table_name) if isinstance(self.table, Fact) else None
-        self.view = cfg.view(self.table.display_name) if isinstance(self.table, View) else None
-
-        self.filters = self.star.filters if self.star else self.table.filters
-        self.logger = rotating_log('query_manager.QueryManager')
+        self.table = config.table
+        self.base = config.display_base
 
     #   Connect Signals
         self.runner.signals.results.connect(self.process_results)
@@ -50,47 +47,22 @@ class QueryManager(QtCore.QObject):
         """Accept a string with a type and convert it into a where condition"""
         self.filters[filter_ix].value = value
 
-    @static_property
-    def base(self):
-        if self.view:
-            return self.view
-        elif self.star:
-            return self.star
-        else:
-            return self.table
-
-    @static_property
-    def editable_fields_indices(self) -> List[int]:
-        if self.table.editable:
-            return [
-                i for i, fld
-                in enumerate(self.fields)
-                if i != self.table.primary_key_index
-                    and self.fields[i].editable
-            ]
-        return []
-
-    def get_field_index(self, name: str) -> int:
-        return min(
-            i for i, fld
-            in enumerate(self.fields)
-            if fld.name == name
-        )
-
-    @static_property
-    def headers(self):
-        return [fld.display_name for fld in self.fields]
+    @property
+    def filters(self):
+        if isinstance(self.table, Fact):
+            return self.base.filters
+        return self.table.filters
 
     def export(self, *,
             rows: List[List[str]],
             header: List[str],
             table_name: TableName
     ) -> None:
-        self.exporter.start_export(rows=rows, header=header, table_name=table_name)
-
-    @static_property
-    def fields(self) -> List[Field]:
-        return self.base.fields
+        self.exporter.start_export(
+            rows=rows,
+            header=header,
+            table_name=table_name
+        )
 
     @static_property
     def filters_by_name(self) -> Optional[Dict[str, Filter]]:
@@ -100,16 +72,31 @@ class QueryManager(QtCore.QObject):
         }
 
     def pull(self, show_rows_returned: bool=True) -> None:
-        if self.sql_display.is_selectable:
+        try:
             self.runner.run_sql(
                 query=self.sql_display,
-                show_rows_returned=show_rows_returned
+                show_rows_returned=show_rows_returned,
+                con_str=self.config.app.db_path
             )
-        else:
-            err_msg = "Unable to compose the query for base {}" \
-                      .format(self.base.display_name)
+        except AttributeError as e:
+            err_msg = 'pull: {} does not a valid sql statement associated ' \
+                      'with it; error: {}'.format(self.table.display_name, str(e))
+            self.logger.error(err_msg)
+            raise
+        except Exception as e:
+            err_msg = "Error compising the query for table {}; error: {}" \
+                      .format(self.base.display_name, str(e))
             self.logger.error('pull: {}'.format(err_msg))
-            raise AttributeError(err_msg)
+            raise
+
+    # @static_property
+    # def column_index_mapping(self) -> Dict[ColumnIndex, ColumnIndex]:
+    #     # we may want to change our method for looking up the select statement
+    #     # column order, since sqla could change it's __str__ implementation one day
+    #     qry_field_order = [str(fld) for fld in self.sql_display.columns]
+    #
+    #     print('field order', self.config.field_order.keys())
+    #     return qry_field_order
 
     @QtCore.pyqtSlot(list)
     def process_results(self, results: list) -> None:
@@ -120,7 +107,7 @@ class QueryManager(QtCore.QObject):
                 processed.append(list(row))
                 for c, col in enumerate(row):
                     try:
-                        field_type = self.fields[c].dtype
+                        field_type = self.config.field_order[c].dtype
                         processed[r][c] = convert_value(
                             field_type=field_type,
                             value=col
@@ -141,7 +128,6 @@ class QueryManager(QtCore.QObject):
         for f in self.table.filters:
             f.value = ''
 
-    @log_error
     def save_changes(self, changes: Dict[str, List[tuple]]) -> Dict[str, int]:
         """Persist a change to the database.
 
@@ -152,7 +138,7 @@ class QueryManager(QtCore.QObject):
                  'deleted') and valued by the count of said changes that were
                  successfully saved to the database.
         """
-        trans = Transaction()
+        trans = Transaction(con_str=self.config.app.db_path)
         new_rows_id_map = []  # type: List[Tuple[int, int]]
         try:
             for row in changes['deleted']:
@@ -171,14 +157,14 @@ class QueryManager(QtCore.QObject):
 
             results['new_rows_id_map'] = new_rows_id_map
             return results
-        except:
+        except Exception as e:
+            self.logger.error(
+                'save_changes: Unable to save changes; error {}'
+                .format(str(e))
+            )
             raise
 
     @property
     def sql_display(self) -> Select:
-        if self.star:
-            return self.star.select
-        elif self.view:
-            return self.view.select
-        return self.table.select
+        return self.base.select
 

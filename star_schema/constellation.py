@@ -1,6 +1,10 @@
 import datetime
-from collections import ChainMap
-from itertools import chain
+import logging
+from collections import ChainMap, namedtuple
+from functools import lru_cache
+from functools import partial
+from itertools import chain, groupby
+import locale
 from math import isinf, isnan
 import re
 
@@ -15,7 +19,15 @@ from sqlalchemy.sql import (
     Update
 )
 from sqlalchemy.sql.elements import BinaryExpression, literal
-from typing import Optional, List, Dict, Iterable, Any, Union, Callable
+from typing import (
+    Optional,
+    List,
+    Dict,
+    Iterable,
+    Any,
+    Union,
+    Callable,
+    Generator, Iterator)
 
 from sqlalchemy import (
     Boolean,
@@ -41,35 +53,44 @@ from pyparsing import (
 )
 from pyparsing import Optional as pypOptional
 
-from logger import rotating_log
 from star_schema import md
+from star_schema.config import default_config, get_config, ConstellationConfig, \
+    AppConfig, DimensionConfig, FactConfig, FieldConfig, AdditiveFieldConfig, \
+    FilterConfig, CalculatedFieldConfig, SummaryFieldConfig, ForeignKeyConfig, \
+    LookupTableConfig, ViewConfig
 from star_schema.custom_types import (
-    FactName,
-    DimensionName,
+    FactTableName,
+    DimensionTableName,
     ForeignKeyValue,
     SqlDataType,
     ViewName,
     FieldType,
     FieldFormat,
-    FilterConfig,
     FieldName,
     Operator,
     SortOrder,
     ColumnIndex,
     PrimaryKeyIndex,
     OrderBy,
-    Validator)
-
+    Validator,
+    TableName,
+    LookupTableName,
+    FieldDisplayName,
+    DisplayField)
+from star_schema.custom_types import PrimaryKeyValue
+from star_schema.db import fetch
 from star_schema.utilities import (
     static_property,
     autorepr
 )
 
+module_logger = logging.getLogger('app.' + __name__)
 
 date_str_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}.*$")
 true_str_pattern = re.compile(".*true.*", re.IGNORECASE)
 false_str_pattern = re.compile(".*false.*", re.IGNORECASE)
-logger = rotating_log('constellation')
+
+locale.setlocale(locale.LC_ALL, '')
 
 
 def convert_value(*,
@@ -82,11 +103,11 @@ def convert_value(*,
     This conversion function is used to translate user input to a form that
     sqlalchemy can use.
     """
-
     def raise_err():
+        logger = module_logger.getChild('convert_value')
         err_msg = "Unable to convert value {} to {}" \
                   .format(value, field_type)
-        logger.debug("convert_value: {}".format(err_msg))
+        logger.debug(err_msg)
         raise ValueError(err_msg)
 
     default_values = {
@@ -98,7 +119,7 @@ def convert_value(*,
     }
 
     if value is None:
-        return None
+        return
     if not value:
         return default_values[field_type]
     if isinstance(value, float):
@@ -198,25 +219,25 @@ def format_value(*,
     inferred_format = lambda fld_type: next(k for k, v in inferred_data_types.items() if v == field_type)
     format = inferred_format(field_type) if not field_format else field_format
     formatters = {
-        FieldFormat.Accounting: lambda val: '{: ,.2f} '.format(round(val, 2)),
+        FieldFormat.Accounting: lambda val: locale.currency(round(val, 2), symbol=False, grouping=True),
         FieldFormat.Bool:       lambda val: str(val),
-        FieldFormat.Currency:   lambda val: '${: ,.2f} '.format(round(val, 2)),
+        FieldFormat.Currency:   lambda val: locale.currency(round(val, 2), international=True, grouping=True),
         FieldFormat.Date:       lambda val: str(val)[:10],
         FieldFormat.DateTime:   lambda val: str(val),
-        FieldFormat.Float:      lambda val: '{: ,.4f}'.format(round(val, 2)),
-        FieldFormat.Int:        lambda val: '{: d}'.format(round(val, 0)),
+        FieldFormat.Float:      lambda val: locale.currency(round(val, 4), symbol=False, grouping=True),
+        FieldFormat.Int:        lambda val: locale.format_string('%d', round(val, 0), grouping=True),
         FieldFormat.Str:        lambda val: val
     }
     try:
         converted_val = convert_value(field_type=data_type, value=value)
         if converted_val is None:
-            return None
+            return
         return formatters[format](converted_val)
     except Exception as e:
+        logger = module_logger.getChild('format_value')
         err_msg = "Error formatting value {}, type {}".format(value, data_type)
-        logger.debug('format_value: {}'.format(err_msg))
+        logger.debug(err_msg)
         raise ValueError(err_msg)
-        # return value
 
 
 @autorepr
@@ -236,29 +257,24 @@ class Field:
                             If the function returns False for the value
                             of the field then the transaction will be rejected.
     """
-    def __init__(self, *,
-        name: str,
-        dtype: FieldType,
-        display_name: str,
-        field_format: Optional[FieldFormat]=None,
-        filters: Optional[List[FilterConfig]]=None,
-        editable: bool=True,
-        primary_key: bool=False,
-        default_value: Any=None,
-        visible: bool=True,
-        validator: Optional[Validator]=None
-    ) -> None:
+    def __init__(self, config: Union[FieldConfig, SummaryFieldConfig]) -> None:
+        self.config = config
+        self.name = config.name
+        self.dtype = config.dtype
+        self.display_name = config.display_name
+        self.field_format = config.field_format
+        self.editable = config.editable
+        self.primary_key = config.primary_key
+        self.default_value = config.default_value
+        self.visible = config.visible
+        self.validator = config.validator
 
-        self.name = name
-        self.dtype = dtype
-        self.display_name = display_name
-        self.field_format = field_format
-        self.editable = editable
-        self.primary_key = primary_key
-        self.filters = filters
-        self.default_value = default_value
-        self.visible = visible
-        self.validator = validator
+    @property
+    def filters(self):
+        return [
+            Filter(flt_cfg)
+            for flt_cfg in self.config.filters
+        ]
 
     @static_property
     def schema(self) -> Column:
@@ -277,41 +293,57 @@ class Field:
         )
 
 
+# @autorepr
+# class ManyToManyField:
+#     """This class merely stores the configuration for the nexus of many to many fields
+#     """
+#     def __init__(self, *,
+#         lookup_table_name: TableName,
+#         display_name: FieldName,
+#         field_separator: str
+#     ) -> None:
+#
+#         self.lookup_table_name = lookup_table_name
+#         self.display_name = display_name
+#         self.field_separator = field_separator
+#
+#         # mimicked field attributes
+#         self.name = display_name
+#         self.dtype = FieldType.Str
+#         self.field_format = FieldFormat.Str
+#         self.editable = True
+#         self.primary_key = False
+#         self.default_value = ''
+#         self.visible = True
+#         self.filters = []
+#
+#     @static_property
+#     def schema(self):
+#         """A dummy placeholder; the values are replaced during processing"""
+#         # return Column(
+#         #     'None',
+#         #     type_=String,
+#         #     is_literal=True
+#         # )
+#
+#         return literal_column("'None'").label(self.display_name)
+
+
 @autorepr
 class AdditiveField:
     """A field that represents an aggregate of a Fact.
 
     This field type is only used with Views over a Star.
     It mimics its base field except for the schema and editability.
-
-    :param base_field_display_name: the display name of the Star field to aggregate.
-                                    This can be a Field, SummaryField, or a
-                                    CalculatedField.
-    :param aggregate_display_name:  text to use for the output field's header
-    :param aggregate_func:          instance of SqlAlchemy func enum to aggregate
-                                    the field by
-    :param visible                  Display the field on the views?
     """
-
-    def __init__(self, *,
-        base_field_display_name: FieldName,
-        aggregate_display_name: FieldName,
-        aggregate_func: func=func.sum,
-        visible: bool=True
-    ) -> None:
-
-        self.logger = rotating_log('constellation.AdditiveField')
-
-        self.base_field_display_name = base_field_display_name
-        self.display_name = aggregate_display_name
-        self.aggregate_func = aggregate_func
-        self.visible = visible
-
-        # The star property is injected by the Star itself later.
-        # It must be populated before this field can be used.
-        self._star = None
-
-        self.validate_config()
+    def __init__(self, config: AdditiveFieldConfig, star) -> None:
+        self.logger = module_logger.getChild('AdditiveField')
+        self.config = config
+        self.base_field_display_name = config.base_field_display_name
+        self.display_name = config.aggregate_display_name
+        self.aggregate_func = config.aggregate_func
+        self.visible = config.visible
+        self.star = star
 
     @static_property
     def base_field(self) -> Field:
@@ -320,7 +352,7 @@ class AdditiveField:
         The base field may, in fact, be a subquery rather than a simple field.
         """
         if not self.star:
-            err_msg = 'AdditiveField {} must be assigned a star before use.' \
+            err_msg = 'base_field: {} must be assigned a star before use.' \
                       .format(self.display_name)
             self.logger.debug('base_field: {}'.format(err_msg))
             raise AttributeError(err_msg)
@@ -416,26 +448,6 @@ class AdditiveField:
                 .format(self.display_name)
             )
 
-    @static_property
-    def star(self):
-        """The Star this field belongs to"""
-        if not self._star:
-            err_msg = "The star for AdditiveField {} was not" \
-                      "injected prior to calling the field." \
-                      .format(self.display_name)
-            self.logger.debug('star: {}'.format(err_msg))
-            raise(AttributeError, err_msg)
-        return self._star
-
-    def validate_config(self):
-        """Validate that the additive settings on config.cfg for this
-        field meet certain criteria"""
-        if self.sqa_func not in ['avg', 'count', 'sum']:
-            self.logger.debug(
-                'validate_config: The function {} for AdditiveField {} is not '
-                'implemented.'.format(self.sqa_func, self.display_name)
-            )
-
 
 @autorepr
 class Filter:
@@ -445,15 +457,11 @@ class Filter:
     :param operator:        Operator enum value to apply to field
     :param default_value:   value to use in filter on initial load of app
     """
-    def __init__(self, *,
-        field: Field,
-        operator: Operator,
-        default_value: Optional[SqlDataType]=None
-    ) -> None:
-
-        self.field = field
-        self.operator = operator
-        self.default_value = default_value
+    def __init__(self, config: FilterConfig) -> None:
+        self.config = config
+        self.field = Field(config.field)
+        self.operator = config.operator
+        self.default_value = config.default_value
         self._value = None  # type: Optional[SqlDataType]
 
     @static_property
@@ -526,29 +534,18 @@ class CalculatedField:
     :param default_value:       Default value to display when a new record is added
     :param visible              Display the field on the views?
     """
-    def __init__(self, *,
-        formula: str,
-        display_name: FieldName,
-        show_on_fact_table: bool=True,
-        filters: Optional[List[FilterConfig]]=None,
-        default_value: Optional[SqlDataType]=None,
-        visible: bool=True
-    ) -> None:
-
-        self.logger = rotating_log('constellation.CalculatedField')
-
-        self.formula = formula
-        self.display_name = display_name
-        self.show_on_fact_table = show_on_fact_table
-        self.default_value = default_value
-        self._filters = filters
-        self.visible = visible
+    def __init__(self, config: CalculatedFieldConfig) -> None:
+        self.logger = module_logger.getChild('CalculatedField')
+        self.config = config
+        self.formula = config.formula
+        self.display_name = config.display_name
+        self.show_on_fact_table = config.show_on_fact_table
+        self.default_value = config.default_value
+        self.visible = config.visible
 
         # The star property is injected by the Star itself later.
         # It must be populated before this field can be used.
         self._star = None
-
-        self.validate_config()
 
     @static_property
     def base_field_lkp(self):
@@ -560,28 +557,35 @@ class CalculatedField:
         return FieldType.Float
 
     @static_property
+    def filters(self):
+        return [
+            Filter(flt_cfg)
+            for flt_cfg in self.config.filters
+        ]
+
+    @static_property
     def editable(self):
         """Mimic field property"""
         return False
 
-    @static_property
-    def filters(self) -> Optional[List[Filter]]:
-        if self._filters:
-            try:
-                return [
-                    Filter(
-                        field=self,
-                        operator=flt.operator,
-                        default_value=flt.default_value
-                    )
-                    for flt in self._filters
-                ]
-            except Exception as e:
-                self.logger.debug(
-                    "filters: Could not create filters for calculated field {}"
-                    "; error: {}".format(self.display_name, str(e))
-                )
-        return []
+    # @static_property
+    # def filters(self) -> Optional[List[Filter]]:
+    #     if self._filters:
+    #         try:
+    #             return [
+    #                 Filter(
+    #                     field=self,
+    #                     operator=flt.operator,
+    #                     default_value=flt.default_value
+    #                 )
+    #                 for flt in self._filters
+    #             ]
+    #         except Exception as e:
+    #             self.logger.debug(
+    #                 "filters: Could not create filters for calculated field {}"
+    #                 "; error: {}".format(self.display_name, str(e))
+    #             )
+    #     return []
 
     @static_property
     def parsed_formula(self):
@@ -681,13 +685,6 @@ class CalculatedField:
             raise(AttributeError, err_msg)
         return self._star
 
-    def validate_config(self):
-        if not self.formula:
-            self.logger.debug(
-                "validate_config: The formula for CalculatedField {} is blank"
-                .format(self.display_name)
-            )
-
 
 @autorepr
 class SummaryField(Field):
@@ -696,29 +693,14 @@ class SummaryField(Field):
     This field type is used for display on associated fact tables in lieu of
     their integer primary key.
     """
-    def __init__(self, *,
-            display_fields: List[str],
-            display_name: str,
-            separator: str = ' ',
-            filters: Optional[List[FilterConfig]]=None,
-            visible: bool=True
-    ) -> None:
-
-        super(SummaryField, self).__init__(
-            name="_".join(display_fields),
-            dtype=FieldType.Str,
-            display_name=display_name,
-            field_format=FieldFormat.Str,
-            filters=filters,
-            editable=False,
-            primary_key=False,
-            visible=visible
-        )
-
-        self.display_fields = display_fields
-        self.display_name = display_name
-        self.separator = separator
-        self.visible = visible
+    def __init__(self, config: SummaryFieldConfig, schema) -> None:
+        super(SummaryField, self).__init__(config)
+        self.config = config
+        self.display_fields = config.display_fields
+        self.display_name = config.display_name
+        self.separator = config.separator
+        self.visible = config.visible
+        self.schema = schema
 
 
 @autorepr
@@ -727,28 +709,16 @@ class Table:
 
     This class is meant to be subclassed by Dimension and Fact table classes.
     """
-
-    def __init__(self,
-        table_name: str,
-        display_name: str,
-        fields: List[Field],
-        editable: bool,
-        show_on_load: bool=False,
-        order_by: Optional[List[SortOrder]]=None,
-        display_rows: int=10000,
-        refresh_on_update: bool=False
-    ) -> None:
-
-        self.logger = rotating_log('constellation.Table')
-
-        self.table_name = table_name
-        self.display_name = display_name
-        self.fields = fields
-        self.editable = editable
-        self.display_rows = display_rows
-        self.order_by = order_by
-        self.show_on_load = show_on_load
-        self.refresh_on_update = refresh_on_update
+    def __init__(self, config: Union[DimensionConfig, FactConfig]) -> None:
+        self.logger = module_logger.getChild('Table')
+        self.config = config
+        self.table_name = config.table_name
+        self.display_name = config.display_name
+        self.editable = config.editable
+        self.display_rows = config.display_rows
+        self.order_by = config.order_by
+        self.show_on_load = config.show_on_load
+        self.refresh_on_update = config.refresh_on_update
 
     def add_row(self, values: List[str]) -> Insert:
         """Statement to add a row to the table given a list of values"""
@@ -767,7 +737,8 @@ class Table:
         """Create sql statement to delete a row, given a primary key"""
         return self.schema.delete().where(self.primary_key == id)
 
-    def field(self, name: str) -> Field:
+    @lru_cache(maxsize=10)
+    def field(self, name: FieldName) -> Field:
         """Look up a field based on it's name on the table."""
         try:
             return next(fld for fld in self.fields if fld.name == name)
@@ -778,18 +749,29 @@ class Table:
             )
 
     @static_property
+    def fields(self):
+        return [
+            Field(fld_cfg)
+            for fld_cfg in self.config.fields
+        ] + [
+            ForeignKey(fk_cfg)
+            for fk_cfg in self.config.foreign_keys
+        ]
+
+    @static_property
     def filters(self) -> List[Filter]:
         return [
-            Filter(field=fld,
-                   operator=flt.operator,
-                   default_value=flt.default_value)
+            flt
             for fld in self.fields if fld.filters
             for flt in fld.filters
         ]
 
     def filter_by_display_name(self, display_name: str) -> Filter:
         try:
-            return next(flt for flt in self.filters if flt.display_name == display_name)
+            return next(
+                flt for flt in self.filters
+                if flt.display_name == display_name
+            )
         except StopIteration:
             self.logger.debug(
                 'filter_by_display_name: The filter named {} could not be '
@@ -797,17 +779,19 @@ class Table:
             )
 
     @static_property
-    def foreign_keys(self) -> Dict[ColumnIndex, Field]:
-        return {
-            ColumnIndex(i): fld
-            for i, fld in enumerate(self.fields)
-            if isinstance(fld, ForeignKey)
-        }
+    def foreign_keys(self) -> List[Field]:
+        return [
+            ForeignKey(fk_cfg)
+            for fk_cfg in self.config.foreign_keys
+        ]
 
     @static_property
     def primary_key(self) -> Field:
         try:
-            return next(c for c in self.schema.columns if c.primary_key is True)
+            return next(
+                c for c in self.schema.columns
+                if c.primary_key is True
+            )
         except StopIteration:
             self.logger.debug(
                 'primary_key: Could not find the primary key for table {}'
@@ -821,7 +805,7 @@ class Table:
                 next(i for i, c in enumerate(self.schema.columns)
                      if c.primary_key)
             )
-        except StopIteration:
+        except (StopIteration, AttributeError):
             self.logger.debug(
                 'primary_key_index: could not find the primary key index for '
                 'table {}'.format(self.table_name)
@@ -865,35 +849,20 @@ class Dimension(Table):
     be able to see the entire dimension to edit any foreign keys that may show
     up on the associated Fact table.
     """
-
     def __init__(self, *,
-            table_name: DimensionName,
-            display_name: str,
-            fields: List[Field],
-            summary_field: SummaryField,
-            editable: bool=False,
-            show_on_load: bool=True,
-            order_by: Optional[List[OrderBy]]=None,
-            display_rows: int=10000,
-            refresh_on_update: bool=False
-    ) -> None:
+            config: Union[DimensionConfig, LookupTableConfig],
+            dim_lkp_fn: Callable[[DimensionTableName], Table]
+        ) -> None:
 
-        super(Dimension, self).__init__(
-            table_name=table_name,
-            display_name=display_name,
-            fields=fields,
-            editable=editable,
-            show_on_load=show_on_load,
-            display_rows=display_rows,
-            order_by=order_by,
-            refresh_on_update=refresh_on_update
-        )
-
-        self.summary_field = summary_field
-        self.refresh_on_update = refresh_on_update
+        self.logger = module_logger.getChild('Dimension')
+        self.config = config
+        # self.summary_field = SummaryField(config.summary_field)
+        self.refresh_on_update = config.refresh_on_update
+        self.dim_lkp_fn = dim_lkp_fn
+        super(Dimension, self).__init__(config)
 
     @static_property
-    def display_field_schemas(self) -> List[Column]:
+    def summary_field(self) -> SummaryField:
         """Create the sqla schema to display for foreign key values
         on the one-side of the tables relationship with another."""
 
@@ -903,40 +872,52 @@ class Dimension(Table):
             a part of the currend dimensions summary field schema."""
             fld = self.field(fld_name)
             if isinstance(fld, ForeignKey):
-                from star_schema.config import cfg
                 try:
-                    fk = next(
-                        dim for dim in cfg.dimensions
-                        if dim.table_name == fld.dimension
-                    )
-                    return fk.summary_field_schema.schema
-                except StopIteration:
+                    fk = self.dim_lkp_fn(fld.dimension)
+                    if fk:
+                        return fk.summary_field.schema
+                    else:
+                        raise KeyError(
+                            'Could not find the foreign key for field {}; on'
+                            'dimension {}'
+                            .format(fld_name, fld.dimension)
+                        )
+                except Exception as e:
                     self.logger.error(
-                        'display_field_schema: Could not find a '
-                        'dimension for fk field {}.'.format(fld)
+                        'summary_field.fld_schema: Could not find a '
+                        'dimension for fk field {}; table_name: {}; '
+                        'error {}'
+                        .format(fld.display_name, fld.dimension, str(e))
                     )
             return fld.schema
-
-        return [
-            fld_schema(n)
-            for n in self.summary_field.display_fields
-        ]
+        try:
+            display_schema = [
+                fld_schema(n)
+                for n in self.config.summary_field.display_fields
+            ]
+            schema = reduce(
+                lambda x, y: x + self.config.summary_field.separator + y,
+                display_schema
+            ).label(self.config.summary_field.display_name)
+            return SummaryField(config=self.config.summary_field, schema=schema)
+        except Exception as e:
+            self.logger.error(
+                'display_field_schemas: Could not determine schema; error {}'
+                .format(str(e))
+            )
+            raise
 
     @static_property
     def foreign_key_schema(self) -> Table:
-        summary_field = reduce(
-            lambda x, y: x + self.summary_field.separator + y,
-            self.display_field_schemas
-        ).label(self.summary_field.display_name)
-        return select([self.primary_key, summary_field])
+        return select([self.primary_key, self.summary_field.schema])
 
     @static_property
     def order_by_schema(self):
         """The default sort order for the table"""
 
         def lkp_sort_order(
-                fld_name: FieldName,
-                sort_order: Optional[SortOrder]=None):
+            fld_name: FieldName,
+            sort_order: Optional[SortOrder]=None):
 
             fld = self.field(fld_name).schema
             if sort_order == SortOrder.Ascending:
@@ -968,53 +949,66 @@ class Dimension(Table):
                 s = s.order_by(o)
         return s.limit(max_rows)
 
-    @static_property
-    def summary_field_schema(self) -> Column:
-        fld = Field(
-            name=self.summary_field.display_name,
-            display_name=self.summary_field.display_name,
-            dtype=FieldType.Str,
-            field_format=FieldFormat.Str
-        )
-
-        fld.schema = reduce(
-            lambda x, y: x + self.summary_field.separator + y,
-            self.display_field_schemas).label(self.summary_field.display_name)
-        return fld
-
 
 @autorepr
 class ForeignKey(Field):
-    def __init__(self, *,
-            name: str,
-            display_name: str,
-            dimension: DimensionName,
-            foreign_key_field: str,
-            visible: bool=True
-    ) -> None:
-
-        super(ForeignKey, self).__init__(
-            name=name,
-            dtype=FieldType.Int,
-            display_name=display_name,
-            filters=None,  # filters for fks are created on the Star
-            editable=True,
-            primary_key=False,
-            visible=visible
-        )
-
-        self.dimension = dimension
-        self.foreign_key_field = foreign_key_field  # name of id field on dim
-        self.visible = visible
+    def __init__(self, config: ForeignKeyConfig) -> None:
+        super(ForeignKey, self).__init__(config)
+        self.config = config
+        self.dimension = config.dimension
+        self.foreign_key_field = config.foreign_key_field  # name of id field on dim
+        self.visible = config.visible
 
     @static_property
     def schema(self) -> Column:
         return Column(
             self.name,
-            None,
+            Integer,
             sqlaForeignKey("{t}.{f}".format(t=self.dimension,
                                             f=self.foreign_key_field))
         )
+
+
+@autorepr
+class LookupTable(Dimension):
+    """Lookup table specifications
+
+    We don't specify the maximum display or export rows since lookup tables
+    should be (and in this case *must* have a low row count, and the user must
+    be able to see the entire dimension to edit any foreign keys that may show
+    up on the associated Fact table.
+    """
+    def __init__(self, *,
+            config: LookupTableConfig,
+            dim_lkp_fn: Callable[[DimensionTableName], Dimension]
+        ) -> None:
+
+        self.logger = module_logger.getChild('Dimension')
+        self.config = config
+        super(LookupTable, self).__init__(config=config, dim_lkp_fn=dim_lkp_fn)
+
+        self.id_field = Field(config.id_field)
+        self.proximal_fk = ForeignKey(config.proximal_fk)
+        self.distal_fk = ForeignKey(config.distal_fk)
+        self.fields = [
+            self.id_field,
+            self.proximal_fk,
+            self.distal_fk
+        ]
+        # self.summary_field = SummaryField(config.summary_field)
+        self.refresh_on_update = config.refresh_on_update
+
+    # @static_property
+    # def extra_fields(self):
+    #     return [
+    #         Field(ext_cfg)
+    #         for ext_cfg in self.config.extra_fields
+    #     ]
+
+    @static_property
+    def lookup_schema(self) -> Table:
+        return select([self.proximal_fk.schema, self.distal_fk.schema]) \
+               .select_from(self.schema)
 
 
 @autorepr
@@ -1027,33 +1021,20 @@ class Fact(Table):
     don't warrant a separate table to store them.
     """
 
-    def __init__(self, *,
-            table_name: FactName,
-            display_name: str,
-            fields: List[Field],
-            show_on_load: bool=False,
-            editable: bool=False,
-            display_rows: int=10000,
-            order_by: Optional[List[OrderBy]]=None,
-            calculated_fields: Optional[List[CalculatedField]]=None,
-            refresh_on_update: bool=False
-    ) -> None:
+    def __init__(self, config: FactConfig) -> None:
+        self.config = config
+        super(Fact, self).__init__(config)
+        self.refresh_on_update = config.refresh_on_update
 
-        super(Fact, self).__init__(
-            table_name=table_name,
-            display_name=display_name,
-            fields=fields,
-            show_on_load=show_on_load,
-            editable=editable,
-            display_rows=display_rows,
-            order_by=order_by
-        )
-
-        self.calculated_fields = calculated_fields
-        self.refresh_on_update = refresh_on_update
+    @static_property
+    def calculated_fields(self):
+        return [
+            CalculatedField(calc_cfg)
+            for calc_cfg in self.config.calculated_fields
+        ]
 
     @property
-    def dimensions(self) -> List[DimensionName]:
+    def dimensions(self) -> List[DimensionTableName]:
         """List of the associated dimension names"""
         return [
             fld.dimension
@@ -1073,10 +1054,10 @@ class Star:
         dimensions: List[Dimension]=None
     ) -> None:
 
-        self.logger = rotating_log('constellation.Star')
+        self.logger = module_logger.getChild('Star')
 
-        self.fact = fact
-        self._dimensions = dimensions
+        self.fact = fact  # type: Fact
+        self._dimensions = dimensions  # type: List[Dimension]
 
     @static_property
     def calculated_fields(self):
@@ -1087,7 +1068,7 @@ class Star:
         return []
 
     @static_property
-    def dimensions(self) -> Iterable[Dimension]:
+    def dimensions(self) -> List[Dimension]:
         return [
             dim for dim in self._dimensions
             if dim.table_name in [
@@ -1096,6 +1077,10 @@ class Star:
                 if isinstance(fld, ForeignKey)
             ]
         ]
+
+    @static_property
+    def display_name(self):
+        return self.fact.display_name
 
     @static_property
     def display_rows(self) -> int:
@@ -1128,11 +1113,11 @@ class Star:
         star_filters = []  # type: List
         for dim in self.dimensions:
             for flt in dim.summary_field.filters:
-                fk_filter = Filter(
-                    field=dim.summary_field_schema,
-                    operator=flt.operator,
-                    default_value=flt.default_value
-                )
+                fk_filter = Filter(flt.config)
+                #     field=dim.summary_field_schema,
+                #     operator=flt.operator,
+                #     default_value=flt.default_value
+                # )
                 star_filters.append(fk_filter)
         for f in (flt for flt in self.fact.filters):
             star_filters.append(f)
@@ -1161,7 +1146,7 @@ class Star:
     @static_property
     def summary_fields(self) -> Dict[FieldName, Field]:
         return {
-            str(dim.summary_field.display_name): dim.summary_field_schema.schema
+            str(dim.summary_field.display_name): dim.summary_field.schema
             for dim in self.dimensions
         }  # type: Dict[FieldName, Field]
 
@@ -1213,56 +1198,45 @@ class Star:
                     qry = qry.order_by(o)
             return qry
         except Exception as e:
-            self.logger.debug(
+            self.logger.error(
                 'star_query: Error composing star query: {}'
                 .format(str(e))
             )
+            raise
 
 
 @autorepr
 class View:
-    """An aggregate view over a Star"""
-
-    def __init__(self, *,
-        view_display_name: str,
-        fact_table_name: FactName,
-        group_by_field_names: List[FieldName],
-        additive_fields: Optional[List[AdditiveField]],
-        order_by: Optional[List[OrderBy]] = None,
-        show_on_load: bool=False
-    ) -> None:
-
-        self.logger = rotating_log('constellation.View')
-
-        self.display_name = view_display_name  # type: str
-        self._fact_table_name = fact_table_name  # type: str
-        self._group_by_fields = group_by_field_names  # type: Optional[List[FieldName]]
-        self._additive_fields = additive_fields  # type: Optional[List[AdditiveField]]
+    """An aggregate view over a Star
+    """
+    def __init__(self, config: ViewConfig, star: Star) -> None:
+        self.logger = module_logger.getChild('View')
+        self.config = config
+        self.display_name = config.view_display_name  # type: str
+        self.fact_table_name = config.fact_table_name  # type: str
+        self.table_name = self.fact_table_name  # TODO
         self.primary_key_index = -1
         self.editable = False
-        self.show_on_load = show_on_load
-        self.order_by = order_by
+        self.show_on_load = config.show_on_load
+        self.order_by = config.order_by
+        self.star = star
 
     @static_property
     def additive_fields(self) -> List[AdditiveField]:
-        if self._additive_fields:
-            for fld in self._additive_fields:
-                fld._star = self.star
-            return self._additive_fields
+        if self.config.additive_fields:
+            return [
+                AdditiveField(config=add_cfg, star=self.star)
+                for add_cfg in self.config.additive_fields
+            ]
         return []
-
-    @static_property
-    def star(self) -> Star:
-        """Get a reference to the Star associated with the current Fact table"""
-        from star_schema.config import cfg
-        return cfg.star(fact_table=self._fact_table_name)
 
     def field_by_display_name(self, display_name: FieldName) -> Field:
         """Lookup a Field by it's display name."""
         try:
-            return next(fld
-                        for fld in self.fields
-                        if fld.display_name == display_name)
+            return next(
+                fld for fld in self.fields
+                if fld.display_name == display_name
+            )
         except KeyError:
             self.logger.debug(
                 'field_by_display_name: Error looking up field_by_display_name; '
@@ -1294,7 +1268,7 @@ class View:
     def group_by_fields(self):
         return [
             self.star.fields_by_display_name[fld_name]
-            for fld_name in self._group_by_fields
+            for fld_name in self.config.group_by_field_names
         ]
 
     @static_property
@@ -1349,98 +1323,416 @@ class View:
                 'error {}'.format(self.display_name, str(e)))
 
 
+@autorepr
+class DisplayPackage:
+    """This class stores the specifications to send to the view
+
+    :param table:
+        Base table, star, or view that the queries are created from.
+    :param display_name:
+        The name to show on the tab for the table.
+    :param foriegn_keys
+        The foreign key dictionary associated with a field, indexed by display name.
+    :param calculated_field_fn:
+        If the table has any calculated fields, they are calculated on
+        editable tables during post-processing on the Model.
+    """
+    def __init__(self, *,
+        app,
+        table: Table,
+        display_base: Union[Table, Star, View],
+        primary_key_index: PrimaryKeyIndex,
+        field_order: Dict[ColumnIndex, FieldDisplayName],
+        refresh_foreign_keys: Callable[[DimensionTableName], None],
+        foreign_keys:
+            Optional[
+                Dict[FieldDisplayName,
+                     Dict[int, str]
+                ]
+            ]=None,
+        calculated_field_fns:
+            Optional[
+                Dict[FieldName,
+                     Callable[[List[SqlDataType]],
+                              Callable]
+                ]
+            ]=None,
+        lookup_fields:
+            Optional[
+                Dict[FieldDisplayName, Dict[PrimaryKeyValue, str]]
+            ]=None
+        ) -> None:
+
+        self.app = app
+        self.table = table
+        self.display_base = display_base
+        self.foreign_keys = foreign_keys
+        self.calculated_field_fns = calculated_field_fns
+        self.field_order = field_order
+        self.lookup_fields = lookup_fields
+        self.primary_key_index = primary_key_index
+        self.refresh_foreign_keys = refresh_foreign_keys
+
+
+@autorepr
+class App:
+    """Configuration settings for application-wide settings"""
+    def __init__(self, config: AppConfig) -> None:
+        self.color_scheme = config.color_scheme
+        self.db_path = config.db_path
+        self.display_name = config.display_name
+
+
+def sort_fields(
+        fields: List[Field],
+        default_field_order: Optional[List[FieldDisplayName]]=None,
+        many_to_many_fk_names: Optional[Iterable[FieldDisplayName]]=None
+    ) -> List[DisplayField]:
+
+    LookupField = namedtuple(
+        'LookupField',
+        'name display_name'
+    )
+    field_partitions = {
+        AdditiveField:   [],
+        CalculatedField: [],
+        Field:           [],
+        ForeignKey:      [],
+        LookupField:     []
+    }
+    for i, fld in enumerate(fields):
+        fo = DisplayField(display_index=None,
+            original_index=i,
+            name=fld.name,
+            display_name=fld.display_name,
+            field_type=type(fld),
+            dtype=fld.dtype,
+            field_format=fld.field_format,
+            editable=fld.editable,
+            visible=fld.visible,
+            dimension=fld.__dict__.get('dimension')
+        )
+        field_partitions[type(fld)].append(fo)
+    for i, k in enumerate(many_to_many_fk_names,
+            start=len(fields)):
+        fo = DisplayField(display_index=None,
+            original_index=i,
+            name=k,
+            display_name=k,
+            field_type=LookupField,
+            dtype=FieldType.Str,
+            field_format=FieldFormat.Str,
+            editable=False,
+            visible=True,
+            dimension=None
+        )
+        field_partitions[LookupField].append(fo)
+    return [
+        DisplayField(display_index=i,
+            original_index=fld.original_index,
+            name=fld.name,
+            display_name=fld.display_name,
+            field_type=fld.field_type,
+            dtype=fld.dtype,
+            field_format=fld.field_format,
+            editable=fld.editable,
+            visible=fld.visible,
+            dimension=fld.dimension
+        )
+        for i, fld
+        in enumerate(chain(field_partitions[Field],
+            field_partitions[ForeignKey],
+            field_partitions[LookupField],
+            field_partitions[AdditiveField],
+            field_partitions[CalculatedField]))
+    ]
+
+
 class Constellation:
     """Collection of all the Stars in the application"""
 
-    def __init__(self, *,
-        app,
-        dimensions: Optional[List[Dimension]],
-        facts: List[Fact],
-        views: List[View]
-    ) -> None:
-
-        self.logger = rotating_log('constellation.Constellation')
-
-        self.app = app
-        self.dimensions = dimensions  # Optional[List[Dimension]]
-        self.facts = facts  # type: List[Fact]
-        self.views = views  # type Optional[List[View]]
+    def __init__(self, config: ConstellationConfig) -> None:
+        self.logger = module_logger.getChild('Constellation')
+        self.config = config
         self._foreign_keys = {
             tbl.table_name: {}
-            for tbl in dimensions
-        }  # type: Dict[str, Dict[int, str]]
+            for tbl in self.dimensions
+        }  # type: Dict[TableName, Dict[PrimaryKeyValue, str]]
+
+        # flag all dimensions as to_load initially
+        self.dims_to_refresh = set(chain(
+            [tbl.table_name for tbl in self.dimensions],
+            [tbl.table_name for tbl in self.lookup_tables]
+        ))
 
     @static_property
-    def stars(self) -> Dict[FactName, Star]:
-        return {
-            fact.table_name: Star(fact=fact, dimensions=self.dimensions)
-            for fact in self.facts
-        }
+    def app(self):
+        return App(self.config.app)
+
+    @lru_cache(maxsize=10)
+    def dimension(self, dim_name: DimensionTableName) -> Dimension:
+        try:
+            return next(d for d in self.dimensions
+                        if d.table_name == dim_name)
+        except StopIteration:
+            self.logger.debug(
+                'dimension: Unable to find a dimension named {}'
+                .format(dim_name)
+            )
+
+    @static_property
+    def dimensions(self) -> Iterator[Dimension]:
+        return [
+            Dimension(config=dim_cfg, dim_lkp_fn=self.dimension)
+            for dim_cfg in self.config.dimensions
+        ]
+
+    @lru_cache(maxsize=10)
+    def fact(self, fact_name: FactTableName) -> Dimension:
+        try:
+            return next(
+                f for f in self.facts
+                if f.table_name == fact_name
+            )
+        except StopIteration:
+            self.logger.debug(
+                'dimension: Unable to find a dimension named {}'
+                .format(fact_name)
+            )
+
+    @static_property
+    def facts(self) -> Iterator[Fact]:
+        return [
+            Fact(fact_cfg)
+            for fact_cfg in self.config.facts
+        ]
+
+    @lru_cache(maxsize=10)
+    def lookup_table(self, lkp_tbl_name: LookupTableName) -> LookupTable:
+        try:
+            return next(lkp for lkp in self.lookup_tables
+                        if lkp.table_name == lkp_tbl_name)
+        except StopIteration:
+            self.logger.debug(
+                'lookup_table: Unable to find a LookupTable named {}'
+                .format(lkp_tbl_name)
+            )
+
+    @static_property
+    def lookup_tables(self) -> List[LookupTable]:
+        return [
+            LookupTable(config=lkp_cfg, dim_lkp_fn=self.dimension)
+            for lkp_cfg in self.config.lookup_tables
+        ]
 
     @static_property
     def tables(self) -> List[Table]:
-        return chain(self.facts, self.dimensions, self.views)
+        return list(chain(
+            self.facts,
+            self.dimensions,
+            self.lookup_tables,
+            self.views
+        ))
 
-    @property
-    def foreign_key_lookups(self) -> Dict[DimensionName, Select]:
-        try:
-            return {
-                tbl.table_name: tbl.foreign_key_schema
-                for tbl in self.dimensions
-            }
-        except Exception as e:
-            self.logger.debug('foreign_key_lookups: error {}'
-                              .format(str(e)))
+    @static_property
+    def display_packages(self):
+        """Create a package to send to the view for display"""
+        packages = []
+        for tbl in self.tables:
+            try:
+                bases = {
+                    Fact: lambda: self.star(tbl.table_name),
+                    View: lambda: self.view(tbl.display_name),
+                    Dimension: lambda: tbl,
+                    LookupTable: lambda: tbl
+                }
+                display_base = bases[type(tbl)]()
+                if display_base:
+                    one_to_many_fks = {}  # type: Dict[FieldDisplayName, Dict[PrimaryKeyValue, str]]
+                    for fld in display_base.fields:
+                        if isinstance(fld, ForeignKey):
+                            one_to_many_fks[fld.display_name] = partial(self.foreign_keys, fld.dimension)
+                    many_to_many_fks = {
+                        lkp.distal_fk.display_name: partial(self.foreign_keys, lkp.table_name)
+                        for lkp in self.lookup_tables
+                        if lkp.proximal_fk.dimension == tbl.table_name
+                    }  # type: Dict[FieldDisplayName,Dict[PrimaryKeyValue, str]]
+                    field_order = sort_fields(
+                        fields=display_base.fields,
+                        default_field_order=None,
+                        many_to_many_fk_names=many_to_many_fks.keys()
+                    )
+                    # noinspection PyTypeChecker
+                    display_pkg = DisplayPackage(
+                        app=self.config.app,
+                        table=tbl,
+                        display_base=display_base,
+                        primary_key_index=0,
+                        foreign_keys=one_to_many_fks,
+                        calculated_field_fns=None,
+                        lookup_fields=many_to_many_fks,
+                        field_order=field_order,
+                        refresh_foreign_keys=partial(self.refresh_foreign_keys)
+                    )
+                    packages.append(display_pkg)
+                else:
+                    err_msg = 'display_packages: Unable to find display base ' \
+                              'for table {}'.format(tbl)
+                    self.logger.error(err_msg)
+                    raise AttributeError(err_msg)
+            except Exception as e:
+                self.logger.error(
+                    'display_packages: Unable to create display package for '
+                    'table {}; error {}'.format(tbl.table_name, str(e))
+                )
+                raise
+        return packages
 
-    def foreign_keys(self, dim: DimensionName) -> Dict[ForeignKeyValue,
-                                                       SqlDataType]:
-        if self._foreign_keys.get(dim):
-            return self._foreign_keys[dim]
+    def table(self, table_name: TableName):
         try:
-            self.pull_foreign_keys(dim)
-            fks = self._foreign_keys[dim]
-            if 0 not in fks:
-                self._foreign_keys[dim][0] = ""
-                fks[0] = ""
-            return fks
-        except KeyError:
-            self.logger.debug(
-                'foreign_keys: Unable to find the Dimension {}; '
-                .format(dim)
+            return next(
+                tbl for tbl in self.tables
+                if tbl.table_name == table_name
             )
-        except Exception as e:
-            self.logger.debug('foreign_keys: error {}; '.format(str(e)))
+        except StopIteration:
+            self.logger.debug(
+                'table: Unable to find a table named {}'
+                .format(table_name)
+            )
 
-    def pull_foreign_keys(self, dim: DimensionName) -> None:
+    @static_property
+    def views(self):
         try:
-            select_statement = self.foreign_key_lookups[dim]  # type: Select
-            from star_schema.db import fetch
-            self._foreign_keys[dim] = ValueSortedDict({
+            return [
+                View(config=view_cfg, star=self.star(view_cfg.fact_table_name))
+                for view_cfg in self.config.views
+            ]
+        except Exception as e:
+            self.logger.error(
+                "views: Error creating views; error: {}"
+                .format(str(e))
+            )
+            raise
+
+    def pull_one_to_many_fks(self, table_name: TableName) -> None:
+        try:
+            dim = self.dimension(table_name)
+            select_statement = dim.foreign_key_schema
+            self._foreign_keys[table_name] = ValueSortedDict({
                 row[0]: str(row[1])
-                for row in fetch(select_statement)
+                for row in fetch(qry=select_statement,
+                                 con_str=self.config.app.db_path)
             })
-        except Exception as e:
-            self.logger.debug(
-                'pull_foreign_keys: Error pulling foreign keys for dimension {}'
-                .format(dim)
+        except StopIteration:
+            self.logger.error(
+                'pull_one_to_many_fks: Could not find a dimension named {}'
+                .format(table_name)
             )
+            raise
+        except Exception as e:
+            self.logger.error(
+                'pull_one_to_many_fks: Error pulling foreign keys for '
+                'dimension {}; error: {}'.format(table_name, str(e))
+            )
+            raise
 
-    def star(self, fact_table: FactName) -> Star:
+    def pull_many_to_many_fks(self, lkp_tbl_name: LookupTableName) -> None:
+        if not self._foreign_keys.get(lkp_tbl_name):
+            try:
+                lkp_tbl = self.lookup_table(lkp_tbl_name)
+                distal_dim_name = lkp_tbl.distal_fk.dimension
+                distal_dim = self.dimension(distal_dim_name)
+
+                if distal_dim:
+                    rows = fetch(qry=lkp_tbl.lookup_schema,
+                                 con_str=self.config.app.db_path)
+                    distal_fks = {
+                        row[0]: [r[1] for r in row[1]]
+                        for row in groupby(rows, lambda x: x[0])
+                    }
+                    if not self._foreign_keys[distal_dim_name]:
+                        self.pull_one_to_many_fks(distal_dim_name)
+                    fks = self._foreign_keys[distal_dim_name]
+                    if fks and distal_fks:
+                        self._foreign_keys[lkp_tbl_name] = {
+                            k: '; '.join(fks.get(val) for val in v)
+                            for k, v in distal_fks.items()
+                        }
+            except Exception as e:
+                self.logger.error(
+                    'pull_many_to_many_fks: Unable to pull many-to-many '
+                    'foreign-keys for lookup table {}; error {}'
+                    .format(lkp_tbl_name, str(e))
+                )
+                raise
+
+    def refresh_foreign_keys(self, dim: Union[DimensionTableName, LookupTableName]) -> None:
+        self.dims_to_refresh.add(dim)
+
+    def foreign_keys(self,
+            tbl: Union[DimensionTableName, LookupTableName]
+        ) -> Dict[ForeignKeyValue, SqlDataType]:
+
+        if tbl in self.dims_to_refresh:
+            self.dims_to_refresh.remove(tbl)
+            try:
+                if tbl in (lkp.table_name for lkp in self.lookup_tables):
+                    self.pull_many_to_many_fks(tbl)
+                else:
+                    self.pull_one_to_many_fks(tbl)
+                if 0 not in self._foreign_keys[tbl]:
+                    self._foreign_keys[tbl][0] = ""
+                print(self._foreign_keys[tbl])
+                return self._foreign_keys[tbl]
+            except KeyError:
+                self.logger.debug(
+                    'foreign_keys: Unable to find the Dimension {}; '
+                    .format(tbl)
+                )
+            except Exception as e:
+                self.logger.debug(
+                    'foreign_keys: dim: {}; error {}'
+                    .format(tbl, str(e))
+                )
+        else:
+            return self._foreign_keys[tbl]
+
+    @lru_cache(maxsize=10)
+    def star(self, fact_table: FactTableName) -> Star:
         """Return the specific Star system localized on a specific Fact table"""
         try:
             return self.stars[fact_table]
         except KeyError:
             self.logger.debug(
-                'star: The fact table {} could not be found in the cfg global '
-                'variable.'.format(fact_table)
+                'star: The fact table {} could not be found'
+                .format(fact_table)
             )
+            raise
+
+    @static_property
+    def stars(self) -> Dict[FactTableName, Star]:
+        return {
+            fact.table_name: Star(fact=fact, dimensions=self.dimensions)
+            for fact in self.facts
+        }
 
     def view(self, view_name: ViewName) -> View:
         """Return the specified View"""
         try:
-            return next(view for view in self.views if view.display_name == view_name)
+            return next(
+                view for view in self.views
+                if view.display_name == view_name
+            )
         except StopIteration:
             self.logger.debug(
-                'view: A view with the display name {} could not be found in '
-                'the cfg global variable.'.format(view_name)
+                'view: A view with the display name {} could not be found.'
+                .format(view_name)
             )
+
+
+@lru_cache(maxsize=5)
+def get_constellation(json_path: Optional[str]=None):
+    if json_path:
+        return Constellation(get_config(json_path))
+    else:
+        return Constellation(default_config)
