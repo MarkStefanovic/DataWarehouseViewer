@@ -1,9 +1,8 @@
-"""This app displays data from a database in a way that is easy to filter and export.
-"""
+"""Entry point into the program"""
 import logging
-from logging.config import dictConfig
 import os
 import sys
+from logging.config import dictConfig
 
 from PyQt4 import QtGui
 
@@ -11,13 +10,12 @@ from logger import default_config
 from star_schema.constellation import get_constellation
 from view import MainView
 
-
 logging_config = default_config()
 
 
 if __name__ == '__main__':
     app = QtGui.QApplication(sys.argv)
-    constellation = get_constellation()
+    constellation = get_constellation(os.path.join('constellations', 'ireadgud.json'))
     main_view = MainView(constellation=constellation)
     dictConfig(logging_config)
     logger = logging.getLogger('app')

@@ -33,7 +33,7 @@ def create_sqlite_db(eng: sqla_engine) -> None:
     except Exception as e:
         logger.debug(
             'Unable to create database; error {}'
-            .format(str(e))
+            .format(e)
         )
 
 
@@ -69,7 +69,7 @@ def get_engine(con_str: str) -> sqla_engine:
         else:
             logger.debug(
                 'The sqlachemy engine could not be instantiated; '
-                'error {}'.format(str(e))
+                'error {}'.format(e)
             )
             raise
 
@@ -123,7 +123,7 @@ def fetch(qry: Select, con_str: str) -> List[str]:
     except Exception as e:
         logger.error(
             'fetch: Unable to run the query {}; con_str: {}; error {}'
-            .format(pprint_sql(qry), con_str, str(e))
+            .format(pprint_sql(qry), con_str, e)
         )
         raise
     finally:

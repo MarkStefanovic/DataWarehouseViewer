@@ -3,10 +3,9 @@ import os
 import time
 from subprocess import Popen
 
-from typing import List, Dict
-
-from PyQt4 import QtCore
 import xlwt
+from PyQt4 import QtCore
+from typing import List, Dict
 
 from star_schema.custom_types import TableName
 from utilities import delete_old_outputs
@@ -25,7 +24,7 @@ class QueryExporter(QtCore.QObject):
     """This class manages the currently active ExportSql thread"""
 
     def __init__(self) -> None:
-        super(QueryExporter, self).__init__()
+        super().__init__()
         self.signals = SqlSignals()
         self.thread = None  # type: ExportSqlThread
 
@@ -51,7 +50,7 @@ class ExportSqlThread(QtCore.QThread):
             header: List[str],
             table_name: TableName
     ) -> None:
-        super(ExportSqlThread, self).__init__()
+        super().__init__()
         self.logger = module_logger.getChild('ExportSqlThread')
         self.rows = rows  # type: List[List[str]]
         self.header = header  # type: List[str]

@@ -1,13 +1,13 @@
 """The functions used in the module are used by multiple modules in the project"""
-from reprlib import recursive_repr
-import time
 import re
+import time
+from reprlib import recursive_repr
 
 import sqlparse
 from sqlalchemy.dialects import sqlite
 
 
-def autorepr(cls):
+def autorepr(*args, **kwargs):
     """Class decorator that automatically adds __repr__ and __str__ methods.
 
     Example:
@@ -20,35 +20,55 @@ def autorepr(cls):
         >>> t = Test('hello', 'world')
         >>> t.b = t
         >>> print(t)
-        Test
+        Test:
             a = hello
             b = ...
     """
-    excludes = ['config', 'logger']
+    str_attrs = kwargs.get('str_attrs', [])
+    repr_attrs = kwargs.get('repr_attrs', [])
 
-    @recursive_repr()
-    def __repr__(self):
-        attrs = ", ".join(
-            "{}={}".format(k, v)
-            for k, v in self.__dict__.items()
-            if k not in excludes
-                and not k.startswith('_')
-        )
-        return "{}({})".format(self.__class__.__name__, attrs)
+    def include_str_attr(attr):
+        if str_attrs:
+            return attr in str_attrs
+        else:
+            return True
 
-    @recursive_repr()
-    def __str__(self):
-        attrs = "\n".join(
-            "    {} = {}".format(k, v)
-            for k, v in self.__dict__.items()
-            if k not in excludes
-               and not k.startswith('_')
-        )
-        return "{}\n{}".format(self.__class__.__name__, attrs)
+    def include_repr_attr(attr):
+        if repr_attrs:
+            return attr in repr_attrs
+        else:
+            return True
 
-    cls.__repr__ = __repr__
-    cls.__str__ = __str__
-    return cls
+    def wrapper(cls):
+        # print('class {}; str_attrs: {}; repr_attrs: {}'
+        #     .format(cls.__name__, str_attrs, repr_attrs))
+        @recursive_repr()
+        def __repr__(self):
+            attrs = ", ".join(
+                "{}={}".format(k, v)
+                    for k, v in self.__dict__.items()
+                    if include_repr_attr(k)
+            )
+            return "{}({})".format(self.__class__.__name__, attrs)[:1000] # cap at 1K characters
+
+        @recursive_repr()
+        def __str__(self):
+            attrs = "\n".join(
+                "    {} = {}".format(k, v)
+                    for k, v in self.__dict__.items()
+                    if include_str_attr(k)
+            )
+            return "\n{}: {}\n{}".format(self.__class__.__name__, id(self), attrs)[:1000] # cap at 1K characters
+
+        cls.__repr__ = __repr__
+        cls.__str__ = __str__
+        return cls
+
+    if str_attrs or repr_attrs:
+        return wrapper
+    else:
+        cls = args[0]
+        return wrapper(cls)
 
 
 def pprint_sql(cmd) -> str:

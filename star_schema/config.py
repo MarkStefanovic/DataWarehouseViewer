@@ -1,10 +1,9 @@
 import datetime
 import json
+import logging
 import os
-from enum import Enum
 from functools import lru_cache
 
-import logging
 from sqlalchemy import func
 from typing import Dict
 
@@ -14,10 +13,17 @@ from star_schema.custom_types import (
     Operator,
     OrderBy,
     SortOrder,
+    TableName
 )
 from star_schema.utilities import autorepr
+from star_schema.validators import (
+    NonBlank)
 
 module_logger = logging.getLogger('app.' + __name__)
+
+
+class ConfigurationError(Exception):
+    """Error indicating json file does not conform to a valid Constellation"""
 
 
 defaults = {
@@ -27,40 +33,68 @@ defaults = {
 }
 
 
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config'])
 class AppConfig:
+    db_path = NonBlank()
+    display_name = NonBlank()
+
     def __init__(self, config: Dict) -> None:
         self.logger = module_logger.getChild('AppConfig')
         self.config = config
+
         try:
-            self.color_scheme = config['color_scheme']
+            self.color_scheme = config.get('color_scheme', 'darkcity.css')
             self.db_path = config['db_path']
             self.display_name = config['display_name']
         except (KeyError, AttributeError) as e:
-            self.logger.error(
-                'Invalid configuration for App;'
+            err_msg = (
+                'Invalid configuration for App; '
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
-                'Invalid configuration for App;'
+            err_msg = (
+                'Invalid configuration for App; '
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'table_name'])
 class FieldConfig:
-    def __init__(self, config) -> None:
+    """Configuration for a database table field.
+    :param config: (Dict)
+      keys:
+        name:            Field name on the database table
+        dtype:           FieldType enum value representing data type
+        display_name:    Name to display on the field's header
+        field_format:    FieldFormat enum value indicating display format (e.g., decimal places)
+        filters:         List of FilterConfig's representing list of filters to show on query designer
+        editable:        Is this field editable?
+        primary_key:     Is this field the primary key of the table?
+        default_value:   When creating a new instance of the field, start with a default value for the field.
+        visible          Display the field on the views?
+        validator        Function to run when upddating adding rows
+                            If the function returns False for the value
+                            of the field then the transaction will be rejected.
+    """
+    table_name = NonBlank()
+    name = NonBlank()
+    display_name = NonBlank() #Unique('field_display_name')
+
+    def __init__(self, config, table_name: TableName) -> None:
         self.logger = module_logger.getChild('FieldConfig')
         self._config = config  # type: Dict
         try:
+            self.table_name = table_name
             self.name = config['name']  # type: str
             self.dtype = FieldType[config['dtype']]  # type: FieldType
             self.display_name = config['display_name']  # type: str
             self.primary_key = config.get('primary_key', False)  # type: bool
-            self.field_format = FieldFormat[config.get('field_format', 'Str')]
+            self.field_format = FieldFormat[config.get('field_format', config['dtype'])]
             self.editable = config.get('editable', True)  # type: bool
             default_val = defaults.get(config.get('default_value'))
             if default_val:
@@ -75,26 +109,34 @@ class FieldConfig:
             ]
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
-                'Invalid configuration for field;'
+            err_msg = (
+                'Invalid configuration for field; '
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
-                'Invalid configuration for field;'
+            err_msg = (
+                'Invalid configuration for field; '
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['field', 'operator', 'default_value'],
+          repr_attrs=['_config', 'field'])
 class FilterConfig:
-    """Configuration for a filter"""
+    """Configuration for a filter
+
+    :param field:           base Field the filter is based on
+    :param operator:        Operator enum value to apply to field
+    :param default_value:   value to use in filter on initial load of app
+    """
     def __init__(self, config: Dict, field: FieldConfig) -> None:
         self.logger = module_logger.getChild('FilterConfig')
         self._config = config
@@ -103,30 +145,49 @@ class FilterConfig:
             self.operator = Operator[config['operator']]
             self.field = field
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for filter;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for filter;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['display_name', 'formula'],
+          repr_attrs=['_config', 'table_name'])
 class CalculatedFieldConfig:
-    def __init__(self, config) -> None:
+    """A field that represents the combination of one or more fields in a Star.
+
+    :param formula:             String formula using field display names
+    :param display_name:        Name of field to display on header
+    :param show_on_fact_table:  Show this field on the main fact table view
+                                Fields that are merely used as intermediates may
+                                be not be useful to show.
+    :param filters:             Filters to display on QueryDesigner for this field
+    :param default_value:       Default value to display when a new record is added
+    :param visible              Display the field on the views?
+    """
+    name = NonBlank()
+    formula = NonBlank()
+    display_name = NonBlank()
+
+    def __init__(self, config, table_name: TableName) -> None:
         self.logger = module_logger.getChild('CalculatedFieldConfig')
         self._config = config  # type: Dict
         try:
             self.name = config['display_name']
+            self.table_name = table_name
             self.dtype = FieldType[config.get('dtype', 'Float')]
             self.field_format = FieldFormat[config.get('field_format', 'Accounting')]
             self.formula = config['formula']  # type: str
@@ -143,37 +204,43 @@ class CalculatedFieldConfig:
             self.visible = config.get('visible', True)
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for calculated field;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for calculated field;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
-        pass
+        """Validate that the configuration settings are internally consistent"""
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'table_name'])
 class SummaryFieldConfig:
     """
     This class needs to provide the same attributes as a regular Field.
     """
-    def __init__(self, config: Dict) -> None:
+    table_name = NonBlank()
+    display_name = NonBlank()
+
+    def __init__(self, config: Dict, table_name: TableName) -> None:
         self.logger = module_logger.getChild('SummaryField')
         self._config = config  # type: Dict
         try:
-            self.name = None
+            self.table_name = table_name
             self.dtype = FieldType.Str
             self.field_format = FieldFormat.Str
             self.display_fields = config['display_fields']  # type: List[str]
             self.display_name = config['display_name']  # type: str
+            self.name = self.display_name
             self.separator = config.get('separator', ' - ')  # type: str
             self.filters = [
                 FilterConfig(flt_cfg, self)
@@ -186,30 +253,46 @@ class SummaryFieldConfig:
             self.validator = None
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for summary field;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for summary field;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'table_name'])
+class PrimaryKeyConfig(FieldConfig):
+    def __init__(self, config: Dict, table_name: TableName) -> None:
+        config['dtype'] = "Int"
+        config['field_format'] = "Int"
+        config['editable'] = False
+        config['visible'] = False
+        config['validator'] = None
+        config['primary_key'] = True
+        config['default_value'] = None
+        super().__init__(config, table_name)
+
+
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'table_name'])
 class ForeignKeyConfig:
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, table_name: TableName) -> None:
         self.logger = module_logger.getChild('ForeignKeyConfig')
         self._config = config
         try:
             self.name = config['name']
+            self.table_name = table_name
             self.display_name = config['display_name']
             self.dtype = FieldType.Int
             self.field_format = FieldFormat.Str
@@ -226,33 +309,38 @@ class ForeignKeyConfig:
             self.primary_key = False
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for ForeignKey;'
                 'missing a required field; error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for ForeignKey;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'db_path'])
 class DimensionConfig:
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, db_path: str) -> None:
         self.logger = module_logger.getChild('DimensionConfig')
         self._config = config  # type: Dict
         try:
+            self.db_path = config.get('db_path', db_path)
             self.table_name = config['table_name']  # type: str
             self.display_name = config['display_name']  # type: str
+            self.primary_key = PrimaryKeyConfig(config['primary_key'], self.table_name)
             self.editable = config.get('editable', False)  # type: bool
             self.show_on_load = config.get('show_on_load', True)  # type: bool
-            self.summary_field = SummaryFieldConfig(config['summary_field'])
+            self.summary_field = SummaryFieldConfig(config['summary_field'],
+                self.table_name)
             self.display_rows = config.get('display_rows', 10000)
             self.refresh_on_update = config.get('refresh_on_update', False)
             self.order_by = [
@@ -260,50 +348,55 @@ class DimensionConfig:
                         sort_order=SortOrder[ord_cfg['sort_order']])
                 for ord_cfg in config.get('order_by', [])
             ]
-            self.fields = [
-                FieldConfig(fld_cfg)
+            self.fields = [self.primary_key]
+            self.fields += [
+                FieldConfig(fld_cfg, self.table_name)
                 for fld_cfg in config['fields']
-            ]
+            ]  # type: List[FieldConfig]
             self.foreign_keys = [
-                ForeignKeyConfig(fk_cfg)
+                ForeignKeyConfig(fk_cfg, self.table_name)
                 for fk_cfg in config.get('foreign_keys', [])
             ]
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Dimension;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Dimension;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'db_path'])
 class LookupTableConfig:
     """
     This class needs to have the same attributes as DimensionConfig.
     """
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, db_path: str) -> None:
         self.logger = module_logger.getChild('LookupTableConfig')
         self._config = config
         try:
+            self.db_path = config.get('db_path', db_path)
             self.table_name = config['table_name']  # type: str
             self.display_name = config['display_name']  # type: str
-            self.id_field = FieldConfig(config['id_field'])
-            self.proximal_fk = ForeignKeyConfig(config['proximal_fk'])
-            self.distal_fk = ForeignKeyConfig(config['distal_fk'])
+            self.id_field = PrimaryKeyConfig(config['id_field'], self.table_name)
+            self.proximal_fk = ForeignKeyConfig(config['proximal_fk'], self.table_name)
+            self.distal_fk = ForeignKeyConfig(config['distal_fk'], self.table_name)
             self.editable = config.get('editable', True)  # type: bool
             self.show_on_load = config['show_on_load']  # type: bool
-            self.summary_field = SummaryFieldConfig(config['summary_field'])
+            self.summary_field = SummaryFieldConfig(
+                config['summary_field'], self.table_name)
             self.display_rows = config.get('display_rows', 10000)
             self.fields = [
                 self.id_field,
@@ -316,37 +409,41 @@ class LookupTableConfig:
                 for ord_cfg in config.get('order_by', [])
             ]
             self.extra_fields = [
-                FieldConfig(fld_cfg)
+                FieldConfig(fld_cfg, self.table_name)
                 for fld_cfg in config.get('extra_fields', [])
             ]
             self.refresh_on_update = False
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for LookupTable;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for LookupTable;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['display_name'], repr_attrs=['_config', 'db_path'])
 class FactConfig:
-    def __init__(self, config: Dict) -> None:
+    def __init__(self, config: Dict, db_path: str) -> None:
         self.logger = module_logger.getChild('FactConfig')
         self._config = config  # type: Dict
         try:
+            self.db_path = config.get('db_path', db_path)
             self.table_name = config['table_name']  # type: str
             self.display_name = config['display_name']  # type: str
+            self.primary_key = PrimaryKeyConfig(config['primary_key'], self.table_name)
             self.editable = config.get('editable', False)  # type: bool
             self.show_on_load = config.get('show_on_load', True)  # type: bool
             self.display_rows = config.get('display_rows', 10000)  # type: int
@@ -356,38 +453,43 @@ class FactConfig:
                         sort_order=SortOrder[ord_cfg['sort_order']])
                 for ord_cfg in config.get('order_by', [])
             ]
-            self.fields = [
-                FieldConfig(fld_cfg)
+            self.fields = [self.primary_key]
+            self.fields += [
+                FieldConfig(fld_cfg, self.table_name)
                 for fld_cfg in config['fields']
             ]
             self.foreign_keys = [
-                ForeignKeyConfig(fk_cfg)
+                ForeignKeyConfig(fk_cfg, self.table_name)
                 for fk_cfg in config.get('foreign_keys', [])
             ]
             self.calculated_fields = [
-                CalculatedFieldConfig(calc_cfg)
+                CalculatedFieldConfig(calc_cfg, self.table_name)
                 for calc_cfg in config.get('calculated_fields', [])
             ]
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Fact;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Fact;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['aggregate_display_name', 'base_field_display_name',
+                     'aggregate_func'],
+          repr_attrs=['_config'])
 class AdditiveFieldConfig:
     """
     :type config: Dict[str, Union[List, str, bool]]
@@ -417,24 +519,27 @@ class AdditiveFieldConfig:
             self.visible = config.get('visible', True)
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for AdditiveField;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for AdditiveField;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['view_display_name', 'fact_table_name'],
+          repr_attrs=['_config'])
 class ViewConfig:
     def __init__(self, config: Dict) -> None:
         self.logger = module_logger.getChild('ViewConfig')
@@ -456,40 +561,44 @@ class ViewConfig:
             ]
             self.validate()
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for View;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for View;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
 
 
-@autorepr
+@autorepr(str_attrs=['facts', 'dimensions', 'lookup_tables', 'views'],
+          repr_attrs=['_config'])
 class ConstellationConfig:
     def __init__(self, config: Dict) -> None:
         self.logger = module_logger.getChild('ConstellationConfig')
         self._config = config  # type: Dict
         try:
             self.app = AppConfig(config['app'])
+            db_path = self.app.db_path
             self.dimensions = [
-                DimensionConfig(dim_cfg)
+                DimensionConfig(dim_cfg, db_path)
                 for dim_cfg in config.get('dimensions', [])
             ]
             self.lookup_tables = [
-                LookupTableConfig(lkp_cfg)
+                LookupTableConfig(lkp_cfg, db_path)
                 for lkp_cfg in config.get('lookup_tables', [])
             ]
             self.facts = [
-                FactConfig(fact_cfg)
+                FactConfig(fact_cfg, db_path)
                 for fact_cfg in config['facts']
             ]
             self.views = [
@@ -497,18 +606,20 @@ class ConstellationConfig:
                 for view_cfg in config['views']
             ]
         except (KeyError, AttributeError) as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Constellation;'
                 'missing a required field; error {}'
                 .format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
         except Exception as e:
-            self.logger.error(
+            err_msg = (
                 'Invalid configuration for Constellation;'
                 'error {}'.format(str(e))
             )
-            raise
+            self.logger.error(err_msg)
+            raise ConfigurationError(err_msg)
 
     def validate(self):
         pass
@@ -520,574 +631,13 @@ def get_config(json_path: str=os.path.join('constellations', 'default.json')) ->
         return json.load(fh)
 
 
-
-
-'''
-cfg = Constellation(
-    app=App(
-        display_name='Submission Tracker',
-        color_scheme='darkcity.css',
-        db_path='sqlite:///submission_tracker.db'
-    ),
-    dimensions=[
-        Dimension(
-            table_name='dimGenre',
-            display_name='Genres',
-            editable=True,
-            show_on_load=True,
-            fields=[
-                Field(
-                    name='ID',
-                    dtype=FieldType.Int,
-                    display_name='Genre ID',
-                    primary_key=True
-                ),
-                Field(
-                    name='Genre',
-                    dtype=FieldType.Str,
-                    display_name='Genre',
-                    filters=[]
-                )
-            ],
-            summary_field=SummaryField(
-                display_fields=['Genre'],
-                display_name='Genre',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    )
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='Genre',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        ),
-        Dimension(
-            table_name='dimPublication',
-            display_name='Publications',
-            editable=True,
-            show_on_load=True,
-            fields=[
-                Field(
-                    name='ID',
-                    dtype=FieldType.Int,
-                    display_name='Publication ID',
-                    primary_key=True
-                ),
-                Field(
-                    name='PublicationName',
-                    dtype=FieldType.Str,
-                    display_name='Name',
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                # ManyToManyField(
-                #     lookup_table_name='lkpPublicationGenre',
-                #     display_name='Genre(s)',
-                #     field_separator='; '
-                # ),
-                Field(
-                    name='SimultaneousSubmissions',
-                    dtype=FieldType.Bool,
-                    display_name='Simultaneous Submissions',
-                    default_value=False,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.bool_is,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='PreferredScore',
-                    dtype=FieldType.Int,
-                    display_name='Pref.Score: 1-5',
-                    default_value=1,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=1
-                        )
-                    ]
-                ),
-                Field(
-                    name='MinimumWordCount',
-                    dtype=FieldType.Int,
-                    display_name='Min Word Ct',
-                    default_value=50,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        ),
-                        FilterConfig(
-                            operator=Operator.number_less_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='MaximumWordCount',
-                    dtype=FieldType.Int,
-                    display_name='Max Word Ct',
-                    default_value=10000,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        ),
-                        FilterConfig(
-                            operator=Operator.number_less_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='UnderConsideration',
-                    dtype=FieldType.Bool,
-                    display_name='Under Consideration',
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.bool_is,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='Notes',
-                    dtype=FieldType.Str,
-                    display_name='Publication Notes',
-                    field_format=FieldFormat.Str,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='DateAdded',
-                    dtype=FieldType.Str,
-                    editable=False,
-                    display_name='Date Added',
-                    default_value=Defaults.Today,
-                    field_format=FieldFormat.Date,
-                    filters=[],
-                    visible=True
-                )
-            ],
-            summary_field=SummaryField(
-                display_fields=['PublicationName'],
-                display_name='Publication',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    ),
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='PublicationName',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        )
-        , Dimension(
-            table_name='dimStory',
-            display_name='Stories',
-            editable=True,
-            show_on_load=True,
-            fields=[
-                Field(
-                    name='ID',
-                    dtype=FieldType.Int,
-                    display_name='Story ID',
-                    primary_key=True
-                ),
-                Field(
-                    name='Title',
-                    dtype=FieldType.Str,
-                    display_name='Title',
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                # ManyToManyField(
-                #     lookup_table_name='lkpStoryGenre',
-                #     display_name='Genre(s)',
-                #     field_separator='; '
-                # ),
-                Field(
-                    name='DateFinished',
-                    dtype=FieldType.Date,
-                    display_name='Date Finished',
-                    default_value=Defaults.Today,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.date_on_or_after,
-                            default_value=''
-                        ),
-                        FilterConfig(
-                            operator=Operator.date_on_or_before,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='WordLength',
-                    dtype=FieldType.Int,
-                    display_name='Word Length',
-                    default_value=0,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        ),
-                        FilterConfig(
-                            operator=Operator.number_less_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='Notes',
-                    dtype=FieldType.Str,
-                    display_name='Story Notes',
-                    field_format=FieldFormat.Str,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='DateAdded',
-                    dtype=FieldType.Str,
-                    editable=False,
-                    display_name='Date Added',
-                    default_value=Defaults.Today,
-                    field_format=FieldFormat.Date,
-                    filters=[],
-                    visible=True
-                )
-            ],
-            summary_field=SummaryField(
-                display_fields=['Title'],
-                display_name='Story',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    )
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='Title',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        )
-        , Dimension(
-            table_name='dimStatus',
-            display_name='Statuses',
-            editable=True,
-            show_on_load=True,
-            fields=[
-                Field(
-                    name='ID',
-                    dtype=FieldType.Int,
-                    display_name='Status ID',
-                    primary_key=True
-                ),
-                Field(
-                    name='Status',
-                    dtype=FieldType.Str,
-                    display_name='Status',
-                    filters=[]
-                )
-            ],
-            summary_field=SummaryField(
-                display_fields=['Status'],
-                display_name='Status',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    )
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='Status',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        )
-    ],
-    facts=[
-        Fact(
-            table_name='factSubmission',
-            display_name='Submissions',
-            editable=True,
-            display_rows=1000,
-            show_on_load=True,
-            fields=[
-                Field(
-                    name='ID',
-                    dtype=FieldType.Int,
-                    display_name='Status ID',
-                    primary_key=True
-                ),
-                ForeignKey(
-                    name='StoryID',
-                    display_name='Story',
-                    dimension='dimStory',
-                    foreign_key_field='ID'
-                ),
-                ForeignKey(
-                    name='PublicationID',
-                    display_name='Publication',
-                    dimension='dimPublication',
-                    foreign_key_field='ID'
-                ),
-                ForeignKey(
-                    name='StatusID',
-                    display_name='Status',
-                    dimension='dimStatus',
-                    foreign_key_field='ID'
-                ),
-                Field(
-                    name='DateSubmitted',
-                    dtype=FieldType.Date,
-                    display_name='Date Submitted',
-                    default_value=Defaults.Today,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.date_on_or_before,
-                            default_value=''
-                        ),
-                        FilterConfig(
-                            operator=Operator.date_on_or_after,
-                            default_value=''
-                        ),
-                    ]
-                ),
-                Field(
-                    name='Revenue',
-                    dtype=FieldType.Float,
-                    display_name='Revenue',
-                    field_format=FieldFormat.Accounting,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='Expenses',
-                    dtype=FieldType.Float,
-                    display_name='Expenses',
-                    field_format=FieldFormat.Accounting,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='Response',
-                    dtype=FieldType.Str,
-                    display_name='Response(s)',
-                    field_format=FieldFormat.Str,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='Notes',
-                    dtype=FieldType.Str,
-                    display_name='Submission Notes',
-                    field_format=FieldFormat.Str,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.str_like,
-                            default_value=''
-                        )
-                    ]
-                ),
-                Field(
-                    name='DateAdded',
-                    dtype=FieldType.Str,
-                    editable=False,
-                    display_name='Date Added',
-                    default_value=Defaults.Today,
-                    field_format=FieldFormat.Date,
-                    filters=[],
-                    visible=True
-                )
-            ],
-            calculated_fields=[
-                CalculatedField(
-                    formula='[Revenue] - [Expenses]',
-                    display_name='Income',
-                    show_on_fact_table=True,
-                    filters=[
-                        FilterConfig(
-                            operator=Operator.number_greater_than_or_equal_to,
-                            default_value=''
-                        )
-                    ]
-                )
-            ],
-            order_by=[
-                OrderBy(
-                    field_name='Date Submitted',
-                    sort_order=SortOrder.Descending
-                )
-            ],
-            refresh_on_update=False
-        )
-    ],
-    # nexus dimension of a many-to-many relationships
-    lookup_tables= [
-        LookupTable(
-            table_name='lkpStoryGenre',
-            display_name='Story Genre Lookup',
-            editable=True,
-            show_on_load=True,
-            id_field=Field(
-                name='ID',
-                dtype=FieldType.Int,
-                display_name='ID',
-                primary_key=True
-            ),
-            proximal_fk=ForeignKey(
-                name='StoryID',
-                display_name='Story',
-                dimension='dimStory',
-                foreign_key_field='ID'
-            ),
-            distal_fk=ForeignKey(
-                name='GenreID',
-                display_name='Genre(s)',
-                dimension='dimGenre',
-                foreign_key_field='ID'
-            ),
-            extra_fields=[],
-            summary_field=SummaryField(
-                display_fields=['GenreID'],
-                display_name='Genre(s)',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    )
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='GenreID',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        ),
-        LookupTable(
-            table_name='lkpPublicationGenre',
-            display_name='Publication Genre Lookup',
-            editable=True,
-            show_on_load=True,
-            id_field=Field(
-                name='ID',
-                dtype=FieldType.Int,
-                display_name='ID',
-                primary_key=True
-            ),
-            proximal_fk=ForeignKey(
-                name='PublicationID',
-                display_name='Publication',
-                dimension='dimPublication',
-                foreign_key_field='ID'
-            ),
-            distal_fk=ForeignKey(
-                name='GenreID',
-                display_name='Genre(s)',
-                dimension='dimGenre',
-                foreign_key_field='ID'
-            ),
-            extra_fields=[],
-            summary_field=SummaryField(
-                display_fields=['GenreID'],
-                display_name='Genre(s)',
-                separator=' - ',
-                filters=[
-                    FilterConfig(
-                        operator=Operator.str_like,
-                        default_value=''
-                    )
-                ]
-            ),
-            order_by=[
-                OrderBy(
-                    field_name='GenreID',
-                    sort_order=SortOrder.Ascending
-                )
-            ]
-        )
-    ],
-    views=[
-        View(
-            view_display_name='Publication Totals',
-            fact_table_name='factSubmission',
-            group_by_field_names=['Publication', 'Status'],
-            additive_fields=[
-                AdditiveField(
-                    base_field_display_name='Date Submitted',
-                    aggregate_display_name='Stories Submitted',
-                    aggregate_func=func.count
-                ),
-                AdditiveField(
-                    base_field_display_name='Income',
-                    aggregate_display_name='Total Income',
-                    aggregate_func=func.sum
-                ),
-            ],
-            order_by=[
-                OrderBy(
-                    field_name='Publication',
-                    sort_order=SortOrder.Ascending
-                )
-            ],
-            show_on_load=True
-        )
-    ]
-)
-'''
-
-default_config = ConstellationConfig(get_config())
+if __name__ != '__main__':
+    default_config = ConstellationConfig(get_config())
 
 if __name__ == '__main__':
-    print('default_config:', default_config)
+    from pathlib import Path
+    dir = Path(__file__).parents[1]
+    print('dir:', dir)
+    path = os.path.join(str(dir), 'constellations', 'ireadgud.json')
+    print(path)
+    print('default_config:', ConstellationConfig(get_config(path)))

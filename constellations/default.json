@@ -11,13 +11,11 @@
       "editable": true,
       "show_on_load": true,
       "refresh_on_update": false,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Genre ID"
+      },
       "fields": [
-        {
-          "name": "ID",
-          "dtype": "Int",
-          "display_name": "Genre ID",
-          "primary_key": true
-        },
         {
           "name": "Genre",
           "dtype": "Str",
@@ -50,13 +48,11 @@
       "editable": true,
       "show_on_load": true,
       "refresh_on_update": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Publication ID"
+      },
       "fields": [
-        {
-          "name": "ID",
-          "dtype": "Int",
-          "display_name": "Publication ID",
-          "primary_key": true
-        },
         {
           "name": "PublicationName",
           "dtype": "Str",
@@ -67,8 +63,7 @@
               "operator": "str_like",
               "default_value": ""
             }
-          ],
-          "primary_key": false
+          ]
         },
         {
           "name": "SimultaneousSubmissions",
@@ -79,8 +74,7 @@
               "operator": "bool_is",
               "default_value": ""
             }
-          ],
-          "primary_key": false
+          ]
         },
         {
           "name": "PreferredScore",
@@ -92,8 +86,7 @@
               "operator": "number_greater_than_or_equal_to",
               "default_value": 1
             }
-          ],
-          "primary_key": false
+          ]
         },
         {
           "name": "MinimumWordCount",
@@ -110,8 +103,7 @@
               "operator": "number_less_than_or_equal_to",
               "default_value": ""
             }
-          ],
-          "primary_key": false
+          ]
         },
         {
           "name": "MaximumWordCount",
@@ -128,8 +120,7 @@
               "operator": "number_less_than_or_equal_to",
               "default_value": ""
             }
-          ],
-          "primary_key": false
+          ]
         },
         {
           "name": "UnderConsideration",
@@ -146,7 +137,7 @@
           "name": "Notes",
           "dtype": "Str",
           "display_name": "Publication Notes",
-          "field_format": "Str",
+          "field_format": "Memo",
           "filters": [
             {
               "operator": "str_like",
@@ -189,14 +180,11 @@
       "editable": true,
       "show_on_load": true,
       "refresh_on_update": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Story ID"
+      },
       "fields": [
-        {
-          "name": "ID",
-          "dtype": "Int",
-          "display_name": "Story ID",
-          "primary_key": true,
-          "visible": false
-        },
         {
           "name": "Title",
           "dtype": "Str",
@@ -208,7 +196,6 @@
               "default_value": ""
             }
           ],
-          "primary_key": false,
           "visible": true
         },
         {
@@ -227,7 +214,6 @@
               "default_value": ""
             }
           ],
-          "primary_key": false,
           "visible": true
         },
         {
@@ -246,7 +232,6 @@
               "default_value": ""
             }
           ],
-          "primary_key": false,
           "visible": true
         },
         {
@@ -254,14 +239,13 @@
           "dtype": "Str",
           "display_name": "Story Notes",
           "default_value": "",
-          "field_format": "Str",
+          "field_format": "Memo",
           "filters": [
             {
               "operator": "str_like",
               "default_value": ""
             }
           ],
-          "primary_key": false,
           "visible": true
         },
         {
@@ -271,13 +255,12 @@
           "default_value": "Today",
           "field_format": "Date",
           "filters": [],
-          "primary_key": false,
           "visible": true
         }
       ],
       "summary_field": {
         "display_fields": ["Title"],
-        "display_name": "Title",
+        "display_name": "Story",
         "separator": " - ",
         "filters": [
           {
@@ -299,13 +282,11 @@
       "editable": true,
       "show_on_load": true,
       "visible": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Status ID"
+      },
       "fields": [
-        {
-          "name": "ID",
-          "dtype": "Int",
-          "display_name": "Status ID",
-          "primary_key": true
-        },
         {
           "name": "Status",
           "dtype": "Str",
@@ -336,26 +317,23 @@
   "lookup_tables": [
     {
       "table_name": "lkpPublicationGenre",
-      "display_name": "Publication Genre Lookup",
+      "display_name": "Publication Genre(s)",
       "editable": true,
       "show_on_load": true,
       "id_field": {
         "name": "ID",
-        "dtype": "Int",
         "display_name": "ID",
         "primary_key": true
       },
       "proximal_fk": {
         "name": "PublicationID",
         "display_name": "Publication",
-        "dtype": "Int",
         "dimension": "dimPublication",
         "foreign_key_field": "ID"
       },
       "distal_fk": {
         "name": "GenreID",
         "display_name": "Genre(s)",
-        "dtype": "Int",
         "dimension": "dimGenre",
         "foreign_key_field": "ID"
       },
@@ -380,26 +358,23 @@
     },
     {
       "table_name": "lkpStoryGenre",
-      "display_name": "Story Genre Lookup",
+      "display_name": "Story Genre(s)",
       "editable": true,
       "show_on_load": true,
       "id_field": {
         "name": "ID",
-        "dtype": "Int",
         "display_name": "ID",
         "primary_key": true
       },
       "proximal_fk": {
         "name": "StoryID",
         "display_name": "Story",
-        "dtype": "Int",
         "dimension": "dimStory",
         "foreign_key_field": "ID"
       },
       "distal_fk": {
         "name": "GenreID",
         "display_name": "Genre(s)",
-        "dtype": "Int",
         "dimension": "dimGenre",
         "foreign_key_field": "ID"
       },
@@ -430,13 +405,11 @@
       "editable": true,
       "display_rows": 10000,
       "show_on_load": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Submission ID"
+      },
       "fields": [
-        {
-          "name": "ID",
-          "dtype": "Int",
-          "display_name": "Submission ID",
-          "primary_key": true
-        },
         {
           "name": "Revenue",
           "dtype": "Float",
@@ -477,7 +450,7 @@
           "name": "Notes",
           "dtype": "Str",
           "display_name": "Submission Notes",
-          "field_format": "Str",
+          "field_format": "Memo",
           "filters": [
             {
               "operator": "str_like",
@@ -487,7 +460,7 @@
         },
         {
           "name": "DateAdded",
-          "dtype": "Str",
+          "dtype": "Date",
           "editable": false,
           "display_name": "Date Added",
           "default_value": "Today",
@@ -497,8 +470,8 @@
         },
         {
           "name": "DateSubmitted",
-          "dtype": "Str",
-          "editable": false,
+          "dtype": "Date",
+          "editable": true,
           "display_name": "Date Submitted",
           "default_value": "Today",
           "field_format": "Date",

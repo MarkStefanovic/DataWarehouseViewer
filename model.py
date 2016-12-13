@@ -1,29 +1,32 @@
 import logging
+import uuid
 from copy import deepcopy
 from functools import partial
-import uuid
 
+from PyQt4 import QtCore
 from PyQt4.QtCore import QModelIndex
+from sortedcontainers import SortedSet
 from typing import (
     Dict,
     List,
-    Optional, Tuple, Set
+    Optional,
+    Tuple,
+    Set
 )
 
-from PyQt4 import QtCore
-from sortedcontainers import SortedSet
-
-from star_schema.custom_types import ColumnIndex, SqlDataType, FieldIndex, \
-    PrimaryKeyValue, FieldDisplayName
-from query_manager import QueryManager
-
-from star_schema.custom_types import FieldType
+from query_exporter import QueryExporter
+from query_runner import QueryRunner
 from star_schema.constellation import (
-    ForeignKey,
-    Field,
+    convert_value,
     DisplayPackage,
-    Dimension)
-from star_schema.constellation import format_value, convert_value
+    format_value
+)
+from star_schema.custom_types import (
+    ColumnIndex,
+    SqlDataType,
+    FieldDisplayName
+)
+from star_schema.custom_types import FieldType
 
 module_logger = logging.getLogger('app.' + __name__)
 
@@ -31,14 +34,16 @@ module_logger = logging.getLogger('app.' + __name__)
 class AbstractModel(QtCore.QAbstractTableModel):
     filters_changed_signal = QtCore.pyqtSignal()
     error_signal = QtCore.pyqtSignal(str)
+    query_results_signal = QtCore.pyqtSignal(list)
 
     def __init__(self, config: DisplayPackage) -> None:
 
-        super(AbstractModel, self).__init__()
+        super().__init__()
         self.logger = module_logger.getChild('AbstractModel')
         self.config = config
 
-        self.query_manager = QueryManager(config=config)
+        self.query_runner = QueryRunner()
+        self.exporter = QueryExporter()
         self.original_data = []
         self.modified_data = []
         self.visible_data = []
@@ -48,7 +53,8 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.rows_loaded = 50
 
     #   Connect Signals
-        self.query_manager.query_results_signal.connect(self.update_view)
+        self.query_runner.signals.results.connect(self.process_results)
+        self.query_results_signal.connect(self.update_view)
 
     def add_row(self, ix: QtCore.QModelIndex) -> None:
         dummies = {
@@ -59,12 +65,12 @@ class AbstractModel(QtCore.QAbstractTableModel):
             FieldType.Date: None
         }
         dummy_row = []  # type: List
-        for fld in self.query_manager.base.fields:
+        for fld in self.config.display_base.fields:
             if fld.default_value:
                 dummy_row.append(fld.default_value)
             else:
                 dummy_row.append(dummies[fld.dtype])
-        for k, v in self.foreign_keys.items():
+        for k, v in self.config.foreign_keys_by_original_index.items(): # self.foreign_keys.items():
             dummy_row[k] = None
 
         dummy_row[self.config.primary_key_index] = uuid.uuid4().int
@@ -72,7 +78,6 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.visible_data.insert(ix.row() + 1, dummy_row)
         self.modified_data.append(dummy_row)
         self.endInsertRows()
-        # self.dataChanged.emit(ix, ix)
 
     def canFetchMore(self, index=QtCore.QModelIndex()):
         if len(self.visible_data) > self.rows_loaded:
@@ -80,9 +85,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
         return False
 
     @property
-    def changes(self) -> Dict[str, set]:
-        if not self.query_manager.table.editable:
-            return  # safe guard
+    def changes(self) -> Optional[Dict[str, set]]:
+        if not self.config.table.editable:
+            return
         pk = self.config.primary_key_index
         original = set(map(tuple, self.original_data))
         modified = set(map(tuple, self.modified_data))
@@ -98,18 +103,18 @@ class AbstractModel(QtCore.QAbstractTableModel):
             if row[pk] not in {row[pk] for row in updated}
         )
         return {
-            'added': added
-            , 'deleted': deleted
-            , 'updated': updated
+            'added': added,
+            'deleted': deleted,
+            'updated': updated
         }
 
     def fetchMore(self, index=QtCore.QModelIndex()):
         remainder = len(self.visible_data) - self.rows_loaded
         rows_to_fetch = min(remainder, self.rows_per_page)
         self.beginInsertRows(
-            QtCore.QModelIndex()
-            , self.rows_loaded
-            , self.rows_loaded + rows_to_fetch - 1
+            QtCore.QModelIndex(),
+            self.rows_loaded,
+            self.rows_loaded + rows_to_fetch - 1
         )
         self.rows_loaded += rows_to_fetch
         self.endInsertRows()
@@ -117,7 +122,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def field_totals(self, col_ix: ColumnIndex) -> list:
         try:
             totals = []
-            fld = self.config.field_order[col_ix]
+            fld = self.config.fields_by_original_index[col_ix]
             rows = self.rowCount()
             if fld.dtype == FieldType.Float:
                 total = sum(val[col_ix] for val in self.visible_data if val[col_ix])
@@ -125,8 +130,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
                 totals.append('{} Sum \t = {:,.2f}'.format(fld.name, float(total)))
                 totals.append('{} Avg \t = {:,.2f}'.format(fld.name, float(avg)))
             elif fld.dtype == FieldType.Date:
-                minimum = min(val[col_ix] for val in self.visible_data if val[col_ix])
-                maximum = max(val[col_ix] for val in self.visible_data if val[col_ix])
+                minimum = min(val[col_ix] for val in self.visible_data
+                              if val[col_ix])
+                maximum = max(val[col_ix] for val in self.visible_data
+                              if val[col_ix])
                 totals.append('{} Min \t = {}'.format(fld.name, minimum or 'Empty'))
                 totals.append('{} Max \t = {}'.format(fld.name, maximum or 'Empty'))
             else:
@@ -135,10 +142,10 @@ class AbstractModel(QtCore.QAbstractTableModel):
             return totals
         except Exception as e:
             self.logger.error('field_totals: Error calculating field_totals for '
-                              'column {}; error: {}'.format(col_ix, str(e)))
+                              'column {}; error: {}'.format(col_ix, e))
 
     def columnCount(self, parent: QtCore.QModelIndex=None) -> int:
-        return len(self.config.field_order)
+        return len(self.config.fields)
 
     def data(self, index: QtCore.QModelIndex, role: int=QtCore.Qt.DisplayRole):
         alignment = {
@@ -149,38 +156,40 @@ class AbstractModel(QtCore.QAbstractTableModel):
             FieldType.Str: QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
         }
         col = index.column()
-        fld = self.config.field_order[col]
+        fld = self.config.fields_by_original_index[col]
         val = self.visible_data[index.row()][col]
         try:
             if not index.isValid():
                 return
             elif role == QtCore.Qt.TextAlignmentRole:
-                if isinstance(fld, ForeignKey):
+                if hasattr(fld, 'dimension'):
                     return QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter
                 return alignment[fld.dtype]
             elif role == QtCore.Qt.DisplayRole:
                 if val is None:
                     return None
                 try:
-                    if col in self.foreign_keys.keys():
-                        return self.foreign_keys[col][val]
-                    return format_value(
-                        field_type=fld.dtype,
-                        value=val,
-                        field_format=fld.field_format
-                    )
+                    if col in self.config.lookup_field_indices:
+                        rid = self.visible_data[index.row()][self.config.primary_key_index]
+                        return fld.lookup_foreign_key(row_id=rid)
+                    elif col in self.config.foreign_key_indices:
+                        return fld.lookup_foreign_key(val)
+                        # return self.config.foreign_key_lookup(val, col)
+                    else:
+                        return format_value(
+                            field_type=fld.dtype,
+                            value=val,
+                            field_format=fld.field_format
+                        )
                 except Exception as e:
-                    self.logger.debug(
-                        'data: error displaying data {}'
-                        .format(str(e))
-                    )
+                    self.logger.debug('data: error displaying data {}'.format(e))
                     return val
         except Exception as e:
             self.logger.debug(
                 'data: error in data method of model: {}'
-                .format(str(e))
+                .format(e)
             )
-            self.error_signal.emit('Error modeling data: {}'.format(e))
+            self.error_signal.emit('Error modeling data: {}'.format(str(e)))
 
     def delete_row(self, ix: QtCore.QModelIndex) -> None:
         row = ix.row()
@@ -198,6 +207,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def displayed_data(self):
         while len(self.visible_data) > self.rows_loaded:
             self.fetchMore()
+
         rows = []
         for irow in range(self.rowCount()):
             row = []
@@ -211,12 +221,9 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def distinct_values(self, col_ix: ColumnIndex) -> List[str]:
         # noinspection PyTypeChecker
         return SortedSet(
-            str(self.fk_lookup(col=col_ix, val=row[col_ix]))
+            str(self.config.foreign_key_lookup(col=col_ix, val=row[col_ix]))
             for row in self.visible_data
         )
-
-    def field_by_id(self, ix: FieldIndex) -> Field:
-        return self.config.field_order.fields[ix]
 
     def filter_equality(self, col_ix: ColumnIndex, val: SqlDataType) -> None:
         self.visible_data = [
@@ -226,7 +233,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
 
     def filter_greater_than(self, col_ix, val) -> None:
-        lkp = partial(self.fk_lookup, col=col_ix)
+        lkp = partial(self.config.foreign_key_lookup, col=col_ix)
         self.visible_data = [
             row for row in self.visible_data
             if lkp(row[col_ix]) >= lkp(val)
@@ -235,7 +242,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.filters_changed_signal.emit()
 
     def filter_less_than(self, col_ix, val) -> None:
-        lkp = partial(self.fk_lookup, col=col_ix)
+        lkp = partial(self.config.foreign_key_lookup, col=col_ix)
         self.visible_data = [
             row for row in self.visible_data
             if lkp(row[col_ix]) <= lkp(val)
@@ -245,7 +252,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def filter_like(self, val: str, col_ix: Optional[ColumnIndex]=None) -> None:
         self.layoutAboutToBeChanged.emit()
-        lkp = partial(self.fk_lookup, col=col_ix)
+        lkp = partial(self.config.foreign_key_lookup, col=col_ix)
 
         def normalize(value: str) -> str:
             return str(value).lower()
@@ -256,7 +263,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     return True
             else:
                 if normalize(input_val) in ' '.join([
-                    normalize(self.fk_lookup(val=v, col=c))
+                    normalize(self.config.foreign_key_lookup(val=v, col=c))
                     for c, v in enumerate(row)
                 ]):
                     return True
@@ -272,30 +279,25 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def filter_set(self, col: int, values: Set[str]) -> None:
         try:
-            if col in self.foreign_keys:
+            if col in self.config.foreign_key_indices:
                 fld_type = FieldType.Str
             else:
-                fld_type = self.field_by_id(col).dtype
+                fld_type = self.config.fields_by_original_index[col].dtype
             converter = lambda v: convert_value(field_type=fld_type, value=v)
             vals = set(map(converter, values))
             self.visible_data = [
                 row for row in self.visible_data
-                if converter(self.fk_lookup(col=col, val=row[col])) in vals
+                if converter(self.config.foreign_key_lookup(col=col, val=row[col])) in vals
             ]
             self.filters_changed_signal.emit()
         except Exception as e:
             self.logger.error(
                 'filter_set: Error applying checkbox filter for col {}; '
-                'values {}; error {}:'.format(col, values, str(e))
+                'values {}; error {}:'.format(col, values, e)
             )
 
     def flags(self, ix: QtCore.QModelIndex) -> int:
-        editable_field_indices = (
-            fld.display_index
-            for fld in self.config.field_order
-            if fld.editable
-        )
-        if ix.column() in editable_field_indices:
+        if ix.column() in self.config.editable_field_indices:
             return (
                 QtCore.Qt.ItemIsEditable
                 | QtCore.Qt.ItemIsEnabled
@@ -303,37 +305,12 @@ class AbstractModel(QtCore.QAbstractTableModel):
             )
         return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
 
-    def fk_lookup(self, val: PrimaryKeyValue, col: ColumnIndex) -> SqlDataType:
-        if col in self.foreign_keys.keys():
-            try:
-                return self.foreign_keys[col][val]
-            except KeyError:
-                return ''
-        return val
-
-    def column_index_by_display_name(self, display_name: FieldDisplayName) -> ColumnIndex:
-        try:
-            return next(filter(lambda itm: itm.display_name == display_name,
-                               self.config.field_order)).original_index
-        except StopIteration:
-            self.logger.error(
-                'column_index_by_display_name: Could not find a field with a'
-                'display name {}'.format(display_name)
-            )
-
-    @property
-    def foreign_keys(self) -> Dict[ColumnIndex, Dict[int, str]]:
-        try:
-            return {
-                self.column_index_by_display_name(k): v()
-                for k, v in self.config.foreign_keys.items()
-            }
-        except Exception as e:
-            self.logger.error(
-                "foreign_keys: The model can't find the foreign keys; "
-                "error {}".format(str(e))
-            )
-            raise
+    def export_visible(self, visible_header: List[FieldDisplayName]) -> None:
+        self.exporter.start_export(
+            rows=self.visible_rows(visible_header),
+            header=visible_header,
+            table_name=self.config.display_name
+        )
 
     def full_reset(self) -> None:
         self.layoutAboutToBeChanged.emit()
@@ -345,7 +322,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     @property
     def header(self):
-        return [fld.display_name for fld in self.config.field_order]
+        return [fld.display_name for fld in self.config.fields]
 
     def headerData(self, col: ColumnIndex, orientation: int, role: QtCore.Qt.DisplayRole) -> List[str]:
         if orientation == QtCore.Qt.Horizontal and role == QtCore.Qt.DisplayRole:
@@ -362,18 +339,68 @@ class AbstractModel(QtCore.QAbstractTableModel):
 
     def post_processing(self, rows: List[List[SqlDataType]]) -> List[List[SqlDataType]]:
         # TODO
-        mod_rows = rows
         # insert many-to-many fields
+        mod_rows = rows
         if self.config.lookup_fields:
             for row in rows:
-                for k, v in self.config.lookup_fields.items():
-                    row.append(v().get(row[0], ''))
+                for k, v in self.config.lookup_values_by_original_index.items():
+                    if v():
+                        row.append(v().get(row[0], ''))
+                    else:
+                        self.logger.debug(
+                            'post_processing: Could not find foreign keys for '
+                            'field: {}; row: {}'.format(k, row)
+                        )
+                        row.append('')
+
         # update row-level calculated fields
         return mod_rows
 
     def pull(self, show_rows_returned=True) -> None:
         self.rows_loaded = self.rows_per_page
-        self.query_manager.pull(show_rows_returned)
+        try:
+            self.query_runner.run_sql(
+                query=self.config.display_base.select,
+                show_rows_returned=show_rows_returned,
+                con_str=self.config.app.db_path
+            )
+        except AttributeError as e:
+            err_msg = 'pull: {} does not a valid sql statement associated ' \
+                      'with it; error: {}'\
+                      .format(self.config.table.display_name, e)
+            self.logger.error(err_msg)
+            raise
+        except Exception as e:
+            err_msg = "Error compising the query for table {}; error: {}" \
+                      .format(self.base.display_name, e)
+            self.logger.error('pull: {}'.format(err_msg))
+            raise
+
+    @QtCore.pyqtSlot(list)
+    def process_results(self, results: list) -> None:
+        """Convert data to specified data types"""
+        processed = []
+        try:
+            for r, row in enumerate(results):
+                processed.append(list(row))
+                for c, col in enumerate(row):
+                    try:
+                        field_type = self.config.fields_by_original_index[c].dtype
+                        processed[r][c] = convert_value(
+                            field_type=field_type,
+                            value=col
+                        )
+                    except Exception as e:
+                        self.logger.debug(
+                            'process_results: Error converting value {}, '
+                            'row {}, col {}, err {}'.format(col, r, c, e)
+                        )
+                        processed[r][c] = col
+            self.query_results_signal.emit(processed)
+        except Exception as e:
+            err_msg = "Error processing results: {}".format(e)
+            self.logger.debug('process_results: {}'.format(err_msg))
+            self.error_signal.emit(err_msg)
 
     def primary_key(self, row: int) -> int:
         """Return the primary key value of the specified row"""
@@ -400,8 +427,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def save(self) -> Optional[Dict[str, int]]:
         if self.pending_changes:
             try:
-                results = self.query_manager.save_changes(self.changes)
-
+                results = self.config.table.save_changes(self.changes)
                 def update_id(old_id, new_id):
                     row = next(
                         i for i, row in enumerate(self.modified_data)
@@ -413,15 +439,13 @@ class AbstractModel(QtCore.QAbstractTableModel):
                     update_id(m[0], m[1])
 
                 self.original_data = deepcopy(self.modified_data)
-                if isinstance(self.config.display_base, Dimension):
-                    self.config.refresh_foreign_keys(self.config.display_base.table_name)
-                if self.query_manager.base.refresh_on_update:
-                    self.pull(show_rows_returned=False)
+                # if self.config.display_base.refresh_on_update:
+                #     self.pull(show_rows_returned=False)
                 return results
             except Exception as e:
                 self.logger.error(
                     'save: There was an error saving the following changes: {};'
-                    'error: {}'.format(self.changes, str(e))
+                    'error: {}'.format(self.changes, e)
                 )
                 raise
         # else no changes to save, view displays 'no changes' when this function returns None
@@ -429,7 +453,7 @@ class AbstractModel(QtCore.QAbstractTableModel):
     def setData(self, ix: QtCore.QModelIndex, value: SqlDataType, role: int=QtCore.Qt.EditRole) -> bool:
         try:
             value = convert_value(
-                field_type=self.config.field_order[ix.column()].dtype,
+                field_type=self.config.fields_by_original_index[ix.column()].dtype,
                 value=value
             )
         except Exception as e:
@@ -454,21 +478,21 @@ class AbstractModel(QtCore.QAbstractTableModel):
         """sort table by given column number col"""
         try:
             self.layoutAboutToBeChanged.emit()
-            if col in self.foreign_keys.keys():
+            if col in self.config.foreign_key_indices:
                 self.visible_data = sorted(
                     self.visible_data
-                    , key=lambda row: self.fk_lookup(row[col], col)
+                    , key=lambda row: self.config.foreign_key_lookup(row[col], col)
                 )
             else:
                 try:
                     self.visible_data = sorted(
                         self.visible_data
-                        , key=lambda row: row[col] or 0 #operator.itemgetter(col)
+                        , key=lambda row: row[col] or 0
                     )
                 except Exception as e:
                     self.logger.error('sort: Could not sort rows by their native '
                                       'data type; err: {}; reverting to sorting '
-                                      'by string value'.format(str(e)))
+                                      'by string value'.format(e))
                     self.visible_data = sorted(
                         self.visible_data
                         , key=lambda row: str(row[col] or 0).lower()
@@ -499,33 +523,38 @@ class AbstractModel(QtCore.QAbstractTableModel):
         self.modified_data = deepcopy(self.original_data)
         self.layoutChanged.emit()
 
-    @property
-    def visible_rows(self):
+    def visible_rows(self, visible_header: List[FieldDisplayName]) \
+            -> List[List[str]]:
         """The data as it is displayed to the user
 
         This property is used as the data source for exporting the table"""
         pk = self.config.primary_key_index
 
         def convert_row(row):
-            return (
-                self.fk_lookup(val=val, col=col)
+            return [
+                self.config.foreign_key_lookup(val=val, col=col)
                 for col, val
                 in enumerate(row)
                 if col != pk
-            )
+            ]
 
         if self.visible_data:
-            return [
+            original_display_header = [
+                fld.display_name
+                for fld in self.config.fields
+                if fld.visible
+            ]
+            visible_header_map = {
+                hdr: i
+                for i, hdr in enumerate(visible_header)
+            }
+            col_map = {
+                visible_header_map[hdr]: i
+                for i, hdr in enumerate(original_display_header)
+            }
+            original_rows = [
                 convert_row(row)
                 for row in self.visible_data
             ]
-
-    @property
-    def visible_header(self):
-        pk = self.config.primary_key_index
-        return [
-            hdr
-            for col, hdr
-            in enumerate(self.header)
-            if col != pk
-        ]
+            map_row = lambda row: [row[col_map[ix]] for ix, _ in enumerate(row)]
+            return [map_row(row) for row in original_rows]

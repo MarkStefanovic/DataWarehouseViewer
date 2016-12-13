@@ -1,9 +1,9 @@
 import logging
-
-from PyQt4 import QtCore
 import time
 
+from PyQt4 import QtCore
 from sqlalchemy.sql import Select
+from typing import Optional, Callable, List, Any
 
 from star_schema.db import fetch
 
@@ -22,15 +22,18 @@ class QueryRunnerThread(QtCore.QThread):
     def __init__(self, *,
         query: Select,
         con_str: str,
-        show_rows_returned: bool=True
+        show_rows_returned: bool=True,
+        callback: Optional[Callable[[Any], None]]=None
     ) -> None:
+
         self.logger = module_logger.getChild('QueryRunnerThread')
-        super(QueryRunnerThread, self).__init__()
+        super().__init__()
         self.query = query  # type: Select
         self.signals = QueryRunnerSignals()
         self.start_time = time.time()
         self.show_rows_returned = show_rows_returned
         self.con_str = con_str
+        self.callback = callback
 
     def pull(self) -> None:
         try:
@@ -41,6 +44,8 @@ class QueryRunnerThread(QtCore.QThread):
                 self.logger.debug('pull: {}'.format(err_msg))
                 self.signals.rows_returned_msg.emit(err_msg)
             self.signals.results.emit(results)
+            if self.callback:
+                self.callback(results)
         except Exception as e:
             err_msg = 'Query execution error: {err}; {qry}' \
                 .format(err=e, qry=self.query)
@@ -58,20 +63,22 @@ class QueryRunnerThread(QtCore.QThread):
 class QueryRunner(QtCore.QObject):
     """This class manages the currently active ExportSql thread"""
     def __init__(self) -> None:
-        super(QueryRunner, self).__init__()
+        super().__init__()
         self.signals = QueryRunnerSignals()
         self.thread = None
 
     def run_sql(self, *,
             query: Select,
             con_str: str,
-            show_rows_returned: bool=True
+            show_rows_returned: bool=True,
+            callback: Optional[Callable[[Any], None]]=None
         ) -> None:
         self.signals.exit.emit()  # stop current thread
         self.thread = QueryRunnerThread(
             query=query,
             con_str=con_str,
-            show_rows_returned=show_rows_returned
+            show_rows_returned=show_rows_returned,
+            callback=callback
         )
         self.signals.exit.connect(self.thread.stop)
         self.thread.signals.error.connect(self.signals.error.emit)

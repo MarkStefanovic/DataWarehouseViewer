@@ -1,28 +1,42 @@
 """This module displays the data provided by the query manager"""
 import logging
+import os
 from collections import namedtuple, OrderedDict
 from functools import partial
-import os
-from itertools import chain
-
-from PyQt4.QtGui import QComboBox
-from typing import Dict, List
 
 from PyQt4 import QtCore, QtGui
+from PyQt4.QtGui import QComboBox
+from PyQt4.QtGui import QLineEdit
+from sortedcollections import ValueSortedDict
+from typing import Dict, List
 
 from delegates import (
     CellEditorDelegate,
     CheckBoxDelegate,
-    ForeignKeyDelegate
+    ForeignKeyDelegate,
+    SpinBoxDelegate,
+    DateDelegate,
+    RichTextColumnDelegate,
+    PushButtonDelegate
 )
 from model import AbstractModel
 from star_schema.constellation import (
     Filter,
-    FieldType,
     View,
-    convert_value, DisplayPackage, get_constellation, Constellation)
-from star_schema.custom_types import Operator
-from utilities import rootdir, timestr, timestamp
+    convert_value,
+    DisplayPackage,
+    Constellation)
+from star_schema.custom_types import (
+    Operator,
+    FieldFormat,
+    ColumnIndex,
+    PrimaryKeyValue
+)
+from utilities import (
+    rootdir,
+    timestr,
+    timestamp
+)
 
 module_logger = logging.getLogger('app')
 
@@ -41,15 +55,13 @@ class DatasheetView(QtGui.QWidget):
 
     def __init__(self, config: DisplayPackage, parent=None):
         self.logger = module_logger.getChild('DatasheetView')
-        super(DatasheetView, self).__init__()
+        super().__init__()
 
         self.setWindowFlags = (
             QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
         )
         self.config = config
-        self.foreign_keys = config.foreign_keys
-
 
         self.model = AbstractModel(config=config)
         self.table = QtGui.QTableView()
@@ -61,24 +73,40 @@ class DatasheetView(QtGui.QWidget):
 
         self.hide_pk()
 
-    #   CREATE WIDGETS
         self.top_button_box = QtGui.QDialogButtonBox()
-        # self.btn_reset = QtGui.QPushButton('&Reset Filters')
-        # self.txt_search = QtGui.QLineEdit()
         self.lbl_search = QtGui.QLabel('Quick Search:')
-        self.add_foreign_key_comboboxes()
-        self.add_boolean_checkboxes()
-        self.add_cell_editors()
+
+        self.add_delegates()
 
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.resizeColumnsToContents()
+
         # self.table.resizeRowsToContents()
         # self.table.setWordWrap(True)
 
         # self.table.horizontalHeader().setResizeMode(QtGui.QHeaderView.Stretch)
-        # self.table.horizontalHeader().setStretchLastSection(True)
+
+        # Bubble sort column order by their display index
+        header = self.table.horizontalHeader()
+        order = [ix for ix in config.field_order_map.values()]
+        vis_hdr = [fld.display_name for fld in config.fields]
+        n = len(order)
+        for i in range(n):
+            for j in range(0, n-i-1):
+                if order[j] > order[j+1]:
+                    header.swapSections(j, j+1)
+                    order[j], order[j+1] = order[j+1], order[j]
+                    vis_hdr[j], vis_hdr[j+1] = vis_hdr[j+1], vis_hdr[j]
+
+        # Save the new visible header order for later when exporting
+        sorted_fields = config.fields_by_display_index.values()
+        self.visible_header = [
+            vis_hdr[i]
+            for i, fld in enumerate(sorted_fields)
+            if fld.visible
+        ]
 
     #   LAYOUT
         self.layout = QtGui.QGridLayout()
@@ -86,117 +114,104 @@ class DatasheetView(QtGui.QWidget):
         self.layout.setColumnStretch(0, 1)  # rows designer
         self.layout.setColumnStretch(1, 6)  # ds and summary
 
-        self.query_designer = QueryDesigner(filters=self.model.query_manager.filters)
+        self.query_designer = QueryDesigner(filters=config.filters)
         self.layout.addWidget(self.query_designer, 0, 0, 1, 1, QtCore.Qt.AlignTop)
 
         ds_layout = QtGui.QGridLayout()
         ds_layout.setColumnStretch(2, 4)
-        # ds_layout.addWidget(self.btn_reset, 0, 0, 1, 1)
-        # ds_layout.addWidget(self.lbl_search, 0, 1, 1, 1)
-        # ds_layout.addWidget(self.txt_search, 0, 2, 1, 1)
         ds_layout.addWidget(self.table, 1, 0, 1, 3)
         self.layout.addLayout(ds_layout, 0, 1, 1, 1, QtCore.Qt.AlignTop)
 
-
         bottom_bar = QtGui.QGridLayout()
         self.statusbar = QtGui.QStatusBar()
-        # self.statusbar.showMessage("")
         bottom_bar.addWidget(self.statusbar, 0, 0)
         self.btn_save = QtGui.QPushButton("Save")
         self.btn_undo = QtGui.QPushButton("Undo")
         bottom_bar.setColumnStretch(0, 10)
         bottom_bar.setColumnStretch(1, 1)
         bottom_bar.setColumnStretch(2, 1)
-        if self.model.query_manager.table.editable:
+        if self.config.table.editable:
             bottom_bar.addWidget(self.btn_undo, 0, 1)
             bottom_bar.addWidget(self.btn_save, 0, 2)
         self.layout.addLayout(bottom_bar, 1, 0, 1, 2)
 
-    #   CONNECT SIGNALS
-        # Error Signals
-        self.query_designer.error_signal.connect(self.outside_error)
-        self.model.error_signal.connect(self.outside_error)
-        self.model.query_manager.error_signal.connect(self.outside_error)
-        self.model.query_manager.runner.signals.error.connect(self.outside_error)
-        self.model.query_manager.exporter.signals.error.connect(self.outside_error)
-
-        # self.txt_search.textChanged.connect(self.on_lineEdit_textChanged)
-        # self.btn_reset.clicked.connect(self.reset)
+    #   SIGNALS
         self.btn_save.clicked.connect(self.save)
+        self.btn_undo.clicked.connect(self.undo)
+        self.model.error_signal.connect(self.outside_error)
+        self.model.exporter.signals.error.connect(self.outside_error)
+        self.model.exporter.signals.rows_exported.connect(
+            self.show_rows_exported)
+        self.model.filters_changed_signal.connect(self.table.scrollToTop)
         self.model.layoutChanged.connect(self.table.resizeColumnsToContents)
-        self.model.query_manager.exporter.signals.rows_exported.connect(self.show_rows_exported)
-        self.model.query_manager.runner.signals.rows_returned_msg.connect(self.show_rows_returned)
-        # self.model.layoutChanged.connect(self.open_comboboxes)
-        # self.model.query_manager.runner.signals.rows_returned_msg.connect(self.open_comboboxes)
-        self.query_designer.add_criteria_signal.connect(self.add_query_criteria)
+        self.model.query_runner.signals.error.connect(self.outside_error)
+        self.model.query_runner.signals.rows_returned_msg.connect(
+            self.show_rows_returned)
+        self.query_designer.error_signal.connect(self.outside_error)
         self.query_designer.export_signal.connect(self.export_results)
         self.query_designer.pull_signal.connect(self.pull)
         self.query_designer.reset_signal.connect(self.reset_query)
         self.query_designer.stop_export_signal.connect(
-            self.model.query_manager.exporter.signals.exit.emit)
-        self.btn_undo.clicked.connect(self.undo)
+            self.model.exporter.signals.exit.emit)
 
-    def add_boolean_checkboxes(self):
-        # there is a bug with pyqt where it will error out if a reference is not
-        # maintained on the view to a checkbox delegate when there are multiple
-        # checkbox delegates to display
-        self.checkbox_delegates = {}
-        for i, fld in enumerate(self.model.query_manager.table.fields):
-            if fld.dtype == FieldType.Bool:
-                try:
-                    chk_box = CheckBoxDelegate(self.model)
-                    self.checkbox_delegates[i] = chk_box
-                    self.table.setItemDelegateForColumn(i, chk_box)
-                except Exception as e:
-                    self.logger.debug(
-                        'add_boolean_checkboxes: Error creating checkbox '
-                        'delegate for field index {}'.format(str(e))
-                    )
+    def add_delegates(self):
+        delegate_lkp = {
+            FieldFormat.Accounting: partial(CellEditorDelegate, self.table),
+            FieldFormat.Bool:       partial(CheckBoxDelegate, self.table),
+            FieldFormat.Currency:   partial(CellEditorDelegate, self.table),
+            FieldFormat.Date:       partial(DateDelegate, self.table),
+            FieldFormat.DateTime:   partial(DateDelegate, self.table),
+            FieldFormat.Float:      partial(CellEditorDelegate, self.table),
+            FieldFormat.Int:        partial(SpinBoxDelegate, self.table),
+            FieldFormat.Str:        partial(CellEditorDelegate, self.table),
+            FieldFormat.Memo:       partial(RichTextColumnDelegate, self.table)
+        }
 
-    def add_foreign_key_comboboxes(self) -> None:
-        self.foreign_key_delegates = {}
-        if self.model.query_manager.table.editable and self.model.foreign_keys:
-            for key, val in self.model.foreign_keys.items():
-                delegate = ForeignKeyDelegate(
-                    model=self.model,
-                    foreign_keys=lambda: self.model.foreign_keys[key]
+        if not self.config.table.editable:
+            return
+
+        for ix in self.config.editable_field_indices:
+            try:
+                if ix in self.config.foreign_key_indices:
+                    fk_lkp_fn = self.config.foreign_keys_by_original_index[ix]
+                    delegate = ForeignKeyDelegate(parent=self.table,
+                        foreign_keys=fk_lkp_fn)
+                else:
+                    fld = self.config.fields_by_original_index[ix]
+                    delegate = delegate_lkp[fld.field_format]()
+                self.table.setItemDelegateForColumn(ix, delegate)
+            except Exception as e:
+                self.logger.debug(
+                    'add_delegates: Error adding delegate for column {}; '
+                    'error: {}'.format(ix, e)
                 )
-                self.table.setItemDelegateForColumn(
-                    key,
-                    delegate
-                )
-                self.foreign_key_delegates[key] = delegate
 
-    def add_cell_editors(self) -> None:
-        """This method must be called after the foreign key and checkbox
-        delegates have been instantiated"""
-        self.cell_edit_delegates = {}
-        current_delegates = set(chain(self.foreign_key_delegates.keys(),
-                                      self.checkbox_delegates.keys()))
-        if self.model.query_manager.table.editable:
-            for ix, fld in enumerate(self.model.query_manager.table.fields):
-                if ix not in current_delegates:
-                    delegate = CellEditorDelegate()
-                    self.table.setItemDelegateForColumn(
-                        ix,
-                        delegate
-                    )
-                    self.cell_edit_delegates[ix] = delegate
+        # lookup fields are not editable on the table they are displayed on
+        for ix in self.config.lookup_field_indices:
+            delegate = PushButtonDelegate(self.table)
+            delegate.buttonDoubleClicked.connect(self.open_lookup_field_popup)
+            self.table.setItemDelegateForColumn(ix, delegate)
 
+    @QtCore.pyqtSlot(int, int, int)
+    def open_lookup_field_popup(self, row: int, col: ColumnIndex) -> None:
+        # Select the button so that it is visually apprent which button you
+        # have open.
+        ix = self.model.index(row, col)
+        self.table.selectionModel().select(ix, QtGui.QItemSelectionModel.Select)
 
-    def add_query_criteria(self, filter_ix, value) -> None:
-        self.model.query_manager.add_criteria(filter_ix, value)
+        # look up the display package to send to the popup window
+        pkg = self.config.lookup_field_display_packages_by_original_index[col]
+        primary_key = self.model.primary_key(self.model.visible_data[row])
+        popup = LookupFieldPopup(parent=self.table, config=pkg,
+            primary_key=primary_key)
+        popup.show()
 
     def exit(self):
         self.stop_everything.emit()
 
     def export_results(self) -> None:
-        if self.model.visible_data:
-            self.model.query_manager.export(
-                rows=self.model.displayed_data, #visible_rows,
-                header=self.model.visible_header,
-                table_name=self.model.query_manager.table.display_name
-            )
+        if self.model.displayed_data:
+            self.model.export_visible(visible_header=self.visible_header)
         self.set_status(msg="No rows to export")
 
     @QtCore.pyqtSlot(int)
@@ -218,17 +233,17 @@ class DatasheetView(QtGui.QWidget):
 
     def hide_pk(self) -> None:
         try:
-            pk = self.model.query_manager.table.primary_key_index
+            pk = self.config.table.primary_key_index
             # views don't include the primary key, so we don't try and hide the
             # primary key on views
             if pk >= 0:
                 self.table.hideColumn(pk)
 
-            for ix, fld in enumerate(self.config.field_order):
+            for ix, fld in self.config.fields_by_original_index.items():
                 if not fld.visible:
                     self.table.hideColumn(ix)
         except Exception as e:
-            self.logger.debug('hide_pk: {}'.format(str(e)))
+            self.logger.debug('hide_pk: {}'.format(e))
 
     def hide_query_designer(self):
         self.layout.removeItem(self.query_designer)
@@ -247,7 +262,7 @@ class DatasheetView(QtGui.QWidget):
         if event.matches(QtGui.QKeySequence.Copy):
             self.copy()
         else:
-            super(DatasheetView, self).keyPressEvent(event)
+            super().keyPressEvent(event)
 
     @QtCore.pyqtSlot()
     def rclick_menu_delete(self):
@@ -256,12 +271,7 @@ class DatasheetView(QtGui.QWidget):
 
     def reset(self):
         self.table.resizeColumnsToContents()
-        # self.txt_search.setText('')
         self.model.reset()
-
-    # @QtCore.pyqtSlot(str)
-    # def on_lineEdit_textChanged(self, text):
-    #     self.model.filter_like(self.txt_search.text())
 
     def copy(self):
         """Copy selected cells into copy-buffer"""
@@ -269,41 +279,46 @@ class DatasheetView(QtGui.QWidget):
         indexes = selection.selectedIndexes()
 
         rows = OrderedDict()
-        for idx in indexes:
-            row = idx.row()
+        for ix in indexes:
+            row = ix.row()
             rows[row] = rows.get(row, [])
-            rows[row].append(str(idx.data()) or '')
+            rows[row].append(str(ix.data()) or '')
+
+        # create header to append to clipboard data
+        first_row = min(rows.keys())
+        header = [
+            self.model.header[ix.column()]
+            for ix in indexes
+            if ix.row() == first_row
+        ]
+
         str_array = ''
+        str_array += '\t'.join([hdr for hdr in header]) + '\n'
         for row in rows.keys():
             str_array += '\t'.join([col for col in rows[row]])
             str_array += '\n'
         QtGui.QApplication.clipboard().setText(str_array)
 
-    def pull(self):
+    def pull(self) -> None:
         self.set_status("{}: Pulling".format(timestr()))
 
-        for i, filter in enumerate(self.model.query_manager.filters):
-            name = filter.display_name
-            txt = self.query_designer.filter_refs[name]
-            fld = next(
-                flt.field
-                for flt in self.model.query_manager.base.filters
-                if flt.display_name == name
-            )
-            val = self.query_designer.get_text(txt) # txt.text()
-            if val:
-                try:
-                    cval = convert_value(field_type=fld.dtype, value=val)
-                    self.query_designer.add_criteria(filter_ix=i, value=str(cval)) #txt.text())
-                except:
-                    self.set_status(
-                        "Invalid input: {} is not a {}"
-                        .format(val, fld.dtype)
-                    )
-                    return
+        for filter_display_name, text_box in self.query_designer.filter_refs.items():
+            val = self.query_designer.get_text(text_box)
+            try:
+                flt = Filter.find_by_display_name(filter_display_name)
+                fld = flt.field
+                cval = convert_value(field_type=fld.dtype, value=val)
+                flt.value = cval
+            except:
+                self.set_status(
+                    "Invalid input: {} is not a {}"
+                    .format(val, fld.dtype)
+                )
+                return
+
         self.model.pull()
 
-    def contextMenuEvent(self, event):
+    def contextMenuEvent(self, event) -> None:
         """Implements right-clicking on cell."""
         if not self.table.underMouse():
             return
@@ -314,28 +329,23 @@ class DatasheetView(QtGui.QWidget):
         row_ix = rows[0] if rows else 0
         col_ix = cols[0] if cols else 0
 
-        # If the user's mouse is not over a column in the table, don't show
-        # the popup menu.
-        if not cols and rows:
-            return
-
-        if rows:
-            if row_ix < 0 or col_ix < 0:
+        # If the user's mouse is not over a row or column in the table,
+        # don't show the popup menu.
+        if self.model.visible_data:
+            if col_ix not in cols:
                 return
-
         menu = QtGui.QMenu(self)
-
         menu = self.make_cell_context_menu(menu, row_ix, col_ix)
         menu.exec_(self.mapToGlobal(event.pos()))
 
     def make_cell_context_menu(self, menu, row_ix, col_ix):
-        """Create the mneu displayed when right-clicking on a cell."""
+        """Create the menu displayed when right-clicking on a cell."""
         try:
             val = self.model.visible_data[row_ix][col_ix]
         except IndexError:
             val = ""
 
-        self.col_like = QtGui.QLineEdit()
+        self.col_like = QLineEdit()
         self.col_like.setPlaceholderText("Text like")
         txt_wac = QtGui.QWidgetAction(menu)
         txt_wac.setDefaultWidget(self.col_like)
@@ -343,61 +353,61 @@ class DatasheetView(QtGui.QWidget):
         self.col_like.textChanged.connect(partial(self.filter_col_like, col_ix))
         menu.addSeparator()
 
-    #   List Box: show distinct values for column
-        self.list = QtGui.QListWidget()
-        self.list.setFixedHeight(100)
-        lst_wac = QtGui .QWidgetAction(menu)
-        lst_wac.setDefaultWidget(self.list)
-        menu.addAction(lst_wac)
+        def add_list(height: int=100):
+            widget = QtGui.QListWidget()
+            widget.setFixedHeight(height)
+            lst_wac = QtGui.QWidgetAction(menu)
+            lst_wac.setDefaultWidget(widget)
+            menu.addAction(lst_wac)
+            return widget
 
-        def add_item(text, check_state=QtCore.Qt.Checked):
+        def add_item(list_widget, text, check_state=QtCore.Qt.Checked):
             i = QtGui.QListWidgetItem('%s' % text)
             i.setFlags(i.flags() | QtCore.Qt.ItemIsUserCheckable)
             i.setCheckState(check_state)
-            self.list.addItem(i)
+            list_widget.addItem(i)
 
-        add_item("Show All")
-        add_item("None", QtCore.Qt.Unchecked)
-        [add_item(itm) for itm in self.model.distinct_values(col_ix)]
-        self.list.itemChanged.connect(
+        self.filter_by_list = add_list()
+        add_item(self.filter_by_list, "Show All")
+        add_item(self.filter_by_list, "None", QtCore.Qt.Unchecked)
+        for itm in self.model.distinct_values(col_ix):
+            if itm != "None":
+                add_item(self.filter_by_list, itm)
+        self.filter_by_list.itemChanged.connect(
+            partial(self.on_list_selection_changed, col_ix=col_ix))
+
+        menu.addSeparator()
+        menu.addAction(
+            "Apply Checkbox Filters",
             partial(
-                self.on_list_selection_changed
-                , col_ix=col_ix
+                self.apply_filter_set,
+                col=col_ix
             )
         )
 
         menu.addSeparator()
         menu.addAction(
-            "Apply Checkbox Filters"
-            , partial(
-                self.apply_filter_set
-                , col=col_ix
-            )
-        )
-
-        menu.addSeparator()
-        menu.addAction(
-            "Show Equal To"
-            , partial(
-                self.model.filter_equality
-                , col_ix=col_ix
-                , val=val
+            "Show Equal To",
+            partial(
+                self.model.filter_equality,
+                col_ix=col_ix,
+                val=val
             )
         )
         menu.addAction(
-            "Show Greater Than or Equal To"
-            , partial(
-                self.model.filter_greater_than
-                , col_ix=col_ix
-                , val=val
+            "Show Greater Than or Equal To",
+            partial(
+                self.model.filter_greater_than,
+                col_ix=col_ix,
+                val=val
             )
         )
         menu.addAction(
-            "Show Less Than or Equal To"
-            , partial(
-                self.model.filter_less_than
-                , col_ix=col_ix
-                , val=val
+            "Show Less Than or Equal To",
+            partial(
+                self.model.filter_less_than,
+                col_ix=col_ix,
+                val=val
             )
         )
         menu.addSeparator()
@@ -406,22 +416,21 @@ class DatasheetView(QtGui.QWidget):
             self.reset
         )
 
-
-        if self.model.query_manager.table.editable:
+        if self.config.table.editable:
             menu.addSeparator()
             model_ix = self.model.index(row_ix, col_ix)
             menu.addAction(
-                "Add row"
-                , partial(
-                    self.model.add_row
-                    , ix=model_ix
+                "Add row",
+                partial(
+                    self.model.add_row,
+                    ix=model_ix
                 )
             )
             menu.addAction(
-                "Remove row"
-                , partial(
-                    self.model.delete_row
-                    , ix=model_ix
+                "Remove row",
+                partial(
+                    self.model.delete_row,
+                    ix=model_ix
                 )
             )
 
@@ -438,7 +447,7 @@ class DatasheetView(QtGui.QWidget):
         return menu
 
     def on_list_selection_changed(self, item, col_ix):
-        all_items = [self.list.item(i) for i in range(len(self.list))]
+        all_items = [self.filter_by_list.item(i) for i in range(len(self.filter_by_list))]
 
         Item = namedtuple('Items', 'handle check_state')
         items_dict = {
@@ -486,7 +495,7 @@ class DatasheetView(QtGui.QWidget):
             ]
             show_all_item.setCheckState(QtCore.Qt.Unchecked)
 
-        self.list.blockSignals(True)
+        self.filter_by_list.blockSignals(True)
         if item == show_all_item:
             if item_checked:
                 show_all()
@@ -498,7 +507,7 @@ class DatasheetView(QtGui.QWidget):
                 add_one()
             else:
                 remove_one()
-        self.list.blockSignals(False)
+        self.filter_by_list.blockSignals(False)
 
         self.filter_set = set(
             str(itm.text())
@@ -512,7 +521,7 @@ class DatasheetView(QtGui.QWidget):
 
     @QtCore.pyqtSlot()
     def open_comboboxes(self):
-        if self.model.query_manager.table.editable:
+        if self.config.table.editable:
             for key, val in self.model.foreign_keys.items():
                 for row in range(self.model.rowCount()):
                     self.table.openPersistentEditor(self.model.index(row, key))
@@ -522,8 +531,8 @@ class DatasheetView(QtGui.QWidget):
         self.set_status(msg)
 
     def reset_query(self):
-        # self.txt_search.setText('')
-        self.model.query_manager.reset()
+        for flt in self.config.display_base.filters:
+            flt.value = ''
         self.model.full_reset()
         self.set_status("Query results reset")
 
@@ -534,9 +543,9 @@ class DatasheetView(QtGui.QWidget):
                 self.set_status(
                     "{} rows added; {} rows deleted; {} rows updated"
                     .format(
-                        results['rows_added']
-                        , results['rows_deleted']
-                        , results['rows_updated']
+                        results['rows_added'],
+                        results['rows_deleted'],
+                        results['rows_updated']
                     )
                 )
             else:
@@ -571,6 +580,100 @@ class DatasheetView(QtGui.QWidget):
         self.model.undo()
 
 
+class LookupFieldPopup(QtGui.QDialog):
+    logger = module_logger.getChild('LookupFieldPopup')
+    error_signal = QtCore.pyqtSignal(str)
+    current_window = None
+
+    def __init__(self, parent, config: DisplayPackage, primary_key: PrimaryKeyValue) -> None:
+        super().__init__(parent)
+        self.config = config
+        self.primary_key = primary_key
+
+        # If there is a pre-existing window, close it.
+        try:
+            if LookupFieldPopup.current_window:
+                LookupFieldPopup.current_window.close()
+        except:
+            pass
+
+        LookupFieldPopup.current_window = self
+
+        self.setWindowTitle(config.display_name)
+
+        self.list = QtGui.QListView()
+        self.save_button = QtGui.QPushButton('Save Changes')
+        self.save_button.clicked.connect(self.save_changes)
+
+        self.model = QtGui.QStandardItemModel()
+
+        self.distal_dim_fks = ValueSortedDict(config.table.distal_foreign_keys)
+        self.initial_checked = config.table.lookup_keys.get(primary_key, [])
+        for key, val in self.distal_dim_fks.items():
+            item = QtGui.QStandardItem(val)
+            if key in self.initial_checked:
+                check = QtCore.Qt.Checked
+            else:
+                check = QtCore.Qt.Unchecked
+            item.setCheckState(check)
+            item.setCheckable(True)
+            self.model.appendRow(item)
+
+        self.list.setModel(self.model)
+        self.layout = QtGui.QVBoxLayout()
+        self.setLayout(self.layout)
+        self.layout.addWidget(self.list)
+        self.layout.addWidget(self.save_button)
+
+        # self.model.itemChanged.connect(self.checkbox_event)
+
+    # @QtCore.pyqtSlot(QtGui.QStandardItem)
+    # def checkbox_event(self, item: QtGui.QStandardItem):
+    #     checkstates ={
+    #         0: 'unchecked',
+    #         1: 'tristate',
+    #         2: 'checked'
+    #     }
+    #     print('checkstate:', checkstates[item.checkState()])
+    #     print('text:', item.text())
+
+    def save_changes(self):
+        """Save changes to the database"""
+        def find_lkp_pk(proximal_fk, distal_fk):
+            return next(
+                key for key, val in self.config.table.data.items()
+                if val[0] == proximal_fk and val[1] == distal_fk
+            )
+
+        def diff_changes(current_checked):
+            original = set(self.initial_checked)
+            modified = set(current_checked)
+            added = (modified - original)
+            added_rows = [
+                (-(ix + 1), self.primary_key, a)
+                for ix, a in enumerate(added)
+            ]
+            deleted = (original - modified)
+            deleted_rows = [
+                (find_lkp_pk(self.primary_key, d), self.primary_key, d)
+                for d in deleted
+            ]
+            return {
+                'added':   added_rows,
+                'deleted': deleted_rows,
+                'updated': {}
+            }
+        current = []
+        for i, key in enumerate(self.distal_dim_fks.keys()):
+            if self.model.item(i).checkState() == 2:
+                current.append(key)
+
+        changes = diff_changes(current)
+        self.config.table.save_changes(changes)
+        # LookupFieldPopup.logger.debug('save_changes: {}'.format(changes))
+        self.close()
+
+
 class QueryDesigner(QtGui.QWidget):
     """Populate a layout with filter controls"""
 
@@ -582,7 +685,7 @@ class QueryDesigner(QtGui.QWidget):
     stop_export_signal = QtCore.pyqtSignal()
 
     def __init__(self, filters: List[Filter]) -> None:
-        super(QueryDesigner, self).__init__()
+        super().__init__()
 
         self.logger = module_logger.getChild('QueryDesigner')
 
@@ -594,7 +697,7 @@ class QueryDesigner(QtGui.QWidget):
         self.setLayout(self.layout)
         self.query_controls = {}
         self.filter_refs = {}
-        self.filter_ixs = {}
+        # self.filter_ixs = {}
         self.create_controls()
 
     def add_row(self, filter: Filter) -> None:
@@ -603,7 +706,7 @@ class QueryDesigner(QtGui.QWidget):
             txt = QComboBox()
             txt.addItems(['', 'True', 'False'])
         else:
-            txt = QtGui.QLineEdit()
+            txt = QLineEdit()
         self.filter_refs[filter.display_name] = txt
         self.query_controls[self._current_row] = txt
 
@@ -616,9 +719,6 @@ class QueryDesigner(QtGui.QWidget):
         if isinstance(txt, QComboBox):
             return txt.currentText()
         return txt.text()
-
-    def add_criteria(self, filter_ix: int, value: str) -> None:
-        self.add_criteria_signal.emit(filter_ix, value)
 
     def create_controls(self) -> None:
         for f in self.filters[:20]:  # cap at 20 maximum filter input boxes
@@ -659,9 +759,10 @@ class QueryDesigner(QtGui.QWidget):
 class MainView(QtGui.QDialog):
 
     exit_signal = QtCore.pyqtSignal()
+    reload_tab_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, constellation: Constellation, parent=None):
-        super(MainView, self).__init__(
+        super().__init__(
             parent
             , QtCore.Qt.WindowMinimizeButtonHint
             | QtCore.Qt.WindowMaximizeButtonHint
@@ -681,13 +782,17 @@ class MainView(QtGui.QDialog):
         self.tabs = QtGui.QTabWidget()
         Tab = namedtuple('Tab', 'table_ref ds_ref')
         self.tab_indices = {}  # type: Dict[int, tuple]
-        for i, pkg in enumerate(self.constellation.display_packages):
-            ds = DatasheetView(config=pkg)
-            tbl = pkg.table
-            self.datasheet_controls.append(ds)
-            # self.exit_signal.connect(ds.exit_signal.emit)
-            self.tab_indices[i] = Tab(table_ref=tbl, ds_ref=ds)
-            self.tabs.addTab(ds, tbl.display_name)
+        visible_packages = (
+            pkg for pkg in self.constellation.display_packages
+            if pkg.visible
+        )
+        for i, pkg in enumerate(visible_packages):
+            if pkg.visible:
+                ds = DatasheetView(config=pkg)
+                tbl = pkg.table
+                self.datasheet_controls.append(ds)
+                self.tab_indices[i] = Tab(table_ref=tbl, ds_ref=ds)
+                self.tabs.addTab(ds, tbl.display_name)
 
         self.tabs.currentChanged.connect(self.load_tab)
         self.tabs_loaded = set()
@@ -713,6 +818,8 @@ class MainView(QtGui.QDialog):
         #     )
         filemenu = menubar.addMenu('&View')
         filemenu.addAction('Toggle Query Designer', self.toggle_query_designer)
+
+        self.reload_tab_signal.connect(self.reload_tab)
 
         mainLayout.addWidget(self.tabs)
         self.setLayout(mainLayout)
@@ -750,18 +857,19 @@ class MainView(QtGui.QDialog):
         if tab_index not in self.tab_filters_loaded:
             tab = self.tab_indices[tab_index]
             ds = tab.ds_ref
-            filters = ds.model.query_manager.filters_by_name
+
             for filter_name, txt_box in ds.query_designer.filter_refs.items():
                 try:
-                    flt = filters[filter_name]
+                    flt = Filter.find_by_display_name(filter_name)
                     val = flt.default_value
                     if not txt_box.text():
                         txt_box.setText(val)
                 except Exception as e:
                     self.logger.debug(
                         'apply_default_filters: error applying default filter '
-                        '{}; err:'.format(filter_name, str(e))
+                        '{}; err:'.format(filter_name, e)
                     )
+
             self.tab_filters_loaded.add(tab_index)
 
     @QtCore.pyqtSlot(int)
@@ -772,14 +880,43 @@ class MainView(QtGui.QDialog):
         tab = self.tab_indices[tab_index]
         ds = tab.ds_ref
         ds.query_designer.btn_pull.setDefault(True)
+
+        # views share filters with their fact table, so when if the fact has any
+        # filters applied, load the text boxes in the query designer with those
+        # values since they are already applied anyways.
+        def standardize_value(val):
+            return str(val or '').strip().lower()
+
+        for flt in ds.query_designer.filters:
+            ctl = ds.query_designer.filter_refs[flt.display_name]
+            if isinstance(ctl, QLineEdit): # hasattr(ctl, 'setText'):
+                ctl_val = standardize_value(ctl.text())
+                flt_val = standardize_value(flt.value)
+                if ctl_val != flt_val:
+                    ctl.setText(str(flt.value or ''))
+                    self.reload_tab_signal.emit(tab_index)
+            elif isinstance(ctl, QComboBox):
+                ctl_val = standardize_value(ctl.currentText())
+                flt_val = standardize_value(flt.value)
+                if ctl_val != flt_val:
+                    index = ctl.findText(ctl.currentText(), QtCore.Qt.MatchFixedString)
+                    if index >= 0:
+                        ctl.setCurrentIndex(index)
+                        self.reload_tab_signal.emit(tab_index)
+
         pre_load = tab.table_ref.show_on_load
         if pre_load and tab_index not in self.tabs_loaded:
             # load the tab
-            base = ds.model.query_manager.base
+            base = ds.config.display_base
             ds.query_designer.pull_signal.emit()
             if not isinstance(base, View):
                 # we want the view to reload everytime we open it
                 self.tabs_loaded.add(tab_index)
+
+    @QtCore.pyqtSlot(int)
+    def reload_tab(self, tab_index: int) -> None:
+        if tab_index in self.tabs_loaded:
+            self.tabs_loaded.remove(tab_index)
 
     def open_output_folder(self) -> None:
         folder = os.path.join(rootdir(), 'output')

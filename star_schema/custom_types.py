@@ -8,7 +8,11 @@ from enum import unique, Enum
 from typing import (
     NewType,
     Union,
-    Optional, Callable, Tuple, Any)
+    Optional,
+    Callable,
+    Tuple,
+    Any
+)
 
 from star_schema.utilities import autorepr
 
@@ -44,7 +48,8 @@ DisplayField = namedtuple(
     'field_format '
     'editable '
     'visible '
-    'dimension'
+    'dimension '
+    'primary_key'
 )
 
 
@@ -76,6 +81,7 @@ class FieldFormat(Enum):
     Float = "float"
     Int = "integer"
     Str = "string"
+    Memo = "memo"
 
     def __init__(self, field_format) -> None:
         self.field_format = field_format

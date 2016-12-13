@@ -1,0 +1,407 @@
+{
+  "app": {
+      "display_name": "IReadGud",
+      "color_scheme": "darkcity.css",
+      "db_path": "sqlite:///ireadgud.db"
+  },
+  "dimensions": [
+    {
+      "table_name": "dimAuthors",
+      "display_name": "Authors",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": false,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Author ID"
+      },
+      "fields": [
+        {
+          "name": "FullName",
+          "dtype": "Str",
+          "display_name": "Author",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ],
+          "primary_key": false
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["FullName"],
+        "display_name": "Author",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "FullName",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimBookTypes",
+      "display_name": "Book Types",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "BookType ID"
+      },
+      "fields": [
+        {
+          "name": "BookType",
+          "dtype": "Str",
+          "display_name": "Book Type",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["BookType"],
+        "display_name": "Book Type",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "BookType",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimCompilations",
+      "display_name": "Compilations",
+      "editable": true,
+      "show_on_load": true,
+      "refresh_on_update": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Compilation ID"
+      },
+      "fields": [
+        {
+          "name": "Compilation",
+          "dtype": "Str",
+          "display_name": "Compilation",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ],
+          "visible": true
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Compilation"],
+        "display_name": "Compilation",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Compilation",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimFormats",
+      "display_name": "Formats",
+      "editable": true,
+      "show_on_load": true,
+      "visible": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Format ID"
+      },
+      "fields": [
+        {
+          "name": "Format",
+          "dtype": "Str",
+          "display_name": "Book Format",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Format"],
+        "display_name": "Book Format",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Format",
+          "sort_order": "Ascending"
+        }
+      ]
+    },
+    {
+      "table_name": "dimGenres",
+      "display_name": "Genres",
+      "editable": true,
+      "show_on_load": true,
+      "visible": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Genre ID"
+      },
+      "fields": [
+        {
+          "name": "Genre",
+          "dtype": "Str",
+          "display_name": "Genre",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        }
+      ],
+      "summary_field": {
+        "display_fields": ["Genre"],
+        "display_name": "Genre",
+        "separator": " - ",
+        "filters": [
+          {
+            "operator": "str_like",
+            "default_value": ""
+          }
+        ]
+      },
+      "order_by": [
+        {
+          "field_name": "Genre",
+          "sort_order": "Ascending"
+        }
+      ]
+    }
+  ],
+  "lookup_tables": [],
+  "facts": [
+    {
+      "table_name": "factBooks",
+      "display_name": "Books",
+      "editable": true,
+      "display_rows": 10000,
+      "show_on_load": true,
+      "primary_key": {
+        "name": "ID",
+        "display_name": "Book ID"
+      },
+      "fields": [
+        {
+          "name": "BookName",
+          "dtype": "Str",
+          "display_name": "Title",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "YearPublished",
+          "dtype": "Str",
+          "display_name": "Year Published",
+          "field_format": "Str",
+          "filters": []
+        },
+        {
+          "name": "DateFinished",
+          "dtype": "Date",
+          "display_name": "Date Finished",
+          "field_format": "Date",
+          "filters": [
+            {
+              "operator": "date_on_or_after",
+              "default_value": ""
+            },
+            {
+              "operator": "date_on_or_before",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Finished",
+          "dtype": "Bool",
+          "display_name": "Finished?",
+          "field_format": "Bool",
+          "filters": [
+            {
+              "operator": "bool_is",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "WantScale",
+          "dtype": "Int",
+          "display_name": "Want Scale",
+          "field_format": "Int",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "FavoriteScale",
+          "dtype": "Int",
+          "display_name": "Favorite Scale",
+          "field_format": "Int",
+          "filters": [
+            {
+              "operator": "number_greater_than_or_equal_to",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "Owned",
+          "dtype": "Bool",
+          "display_name": "Owned?",
+          "field_format": "Bool",
+          "filters": [
+            {
+              "operator": "bool_is",
+              "default_value": ""
+            }
+          ]
+        },
+        {
+          "name": "BookNotes",
+          "dtype": "Str",
+          "display_name": "Book Notes",
+          "field_format": "Str",
+          "filters": [
+            {
+              "operator": "str_like",
+              "default_value": ""
+            }
+          ]
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "AuthorID",
+          "display_name": "Author",
+          "dimension": "dimAuthors",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "FormatID",
+          "display_name": "Physical Format",
+          "dimension": "dimFormats",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "BookTypeID",
+          "display_name": "Book Type",
+          "dimension": "dimBookTypes",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "GenreID",
+          "display_name": "Genre",
+          "dimension": "dimGenres",
+          "foreign_key_field": "ID"
+        },
+        {
+          "name": "CompilationID",
+          "display_name": "Compilation",
+          "dimension": "dimCompilations",
+          "foreign_key_field": "ID"
+        }
+      ],
+      "calculated_fields": [],
+      "order_by": [
+        {
+          "field_name": "Author",
+          "sort_order": "Ascending"
+        }
+      ],
+      "refresh_on_update": false
+    }
+  ],
+  "views": [
+    {
+      "view_display_name": "Books by Author",
+      "fact_table_name": "factBooks",
+      "group_by_field_names": ["Author"],
+      "additive_fields": [
+        {
+          "base_field_display_name": "Title",
+          "aggregate_display_name": "Stories",
+          "aggregate_func": "count"
+        },
+        {
+          "base_field_display_name": "Favorite Scale",
+          "aggregate_display_name": "Avg Fav Score",
+          "aggregate_func": "avg"
+        },
+        {
+          "base_field_display_name": "Owned?",
+          "aggregate_display_name": "Stories Owned",
+          "aggregate_func": "sum"
+        },
+        {
+          "base_field_display_name": "Finished?",
+          "aggregate_display_name": "Stories Read",
+          "aggregate_func": "sum"
+        }
+      ],
+      "order_by": [
+        {
+          "field_name": "Avg Fav Score",
+          "sort_order": "Descending"
+        }
+      ],
+      "show_on_load": true
+    }
+  ]
+}
